@@ -6,14 +6,17 @@
 #include <stdint.h>
 #include <signal.h>
 
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/select.h>
 #include <sys/socket.h>
-#include <microhttpd.h>
 
+#include <syslog.h>
+#include <microhttpd.h>
 #include <mysql.h>
 
-#define DEBUG
 #include <gweb/common.h>
 #include <gweb/server.h>
 #include <gweb/json_api.h>
@@ -238,15 +241,63 @@ sig_kill_handler (int signum)
     exit(0);
 }
 
+static void
+daemonize_this_process (void)
+{
+    pid_t pid;
+    int fd;
+
+    /* Fork parent and kill */
+    if ((pid = fork()) < 0)
+        exit(EXIT_FAILURE);
+
+    if (pid > 0)
+        exit(EXIT_SUCCESS);
+
+    /* Set child as session leader */
+    if (setsid() < 0)
+        exit(EXIT_FAILURE);
+
+    signal(SIGCHLD, SIG_IGN);
+    signal(SIGHUP, SIG_IGN);
+
+    /* Fork keeping child as session leader */
+    if ((pid = fork()) < 0)
+        exit(EXIT_FAILURE);
+
+    if (pid > 0)
+        exit(EXIT_SUCCESS);
+
+    umask(0);
+    chdir("/");
+
+    for (fd = sysconf(_SC_OPEN_MAX); fd >= 0; fd--)
+        close(fd);
+
+    /* Open the log file */
+    openlog("GWEB daemon", LOG_PID, LOG_DAEMON);
+}
+
 /*
  * Start the webserver and listen to given port
  */
 int main (int argc, char *argv[])
 {
     struct MHD_Daemon *daemon;
+    uint32_t server_port = GWEB_SERVER_PORT;
+
+    /* Quick/Dirty check for port option */
+    if (argc == 3 && argv[1][0] == '-' && argv[1][1] == 'p') {
+        server_port = atoi(argv[2]);
+        if (!server_port) {
+            server_port = GWEB_SERVER_PORT;
+        }
+    }
+
+    daemonize_this_process();
 
     daemon = MHD_start_daemon(MHD_USE_SELECT_INTERNALLY,
-		 GWEB_SERVER_PORT, NULL, NULL, &mhd_connection_handler, NULL,
+		 server_port, NULL, NULL, &mhd_connection_handler, NULL,
 		 MHD_OPTION_EXTERNAL_LOGGER, fprintf, NULL,
 		 MHD_OPTION_NOTIFY_COMPLETED, &mhd_request_completed, NULL,
 		 MHD_OPTION_END);
@@ -265,7 +316,6 @@ int main (int argc, char *argv[])
 	return -1;
     }
     
-
     g_daemon = daemon;
 
     signal(SIGUSR1, sig_kill_handler);
@@ -279,6 +329,6 @@ int main (int argc, char *argv[])
 
 /*
  * Local Variables:
- * compile-command:"gcc handle_response_microhttpd.c -I../production/include -L../production/lib `mysql_config --cflags` -lmicrohttpd -ljson-c `mysql_config --libs`"
+ * compile-command:"gcc gweb_server.c -I../production/include -L../production/lib `mysql_config --cflags` -lmicrohttpd -ljson-c `mysql_config --libs`"
  * End:
  */

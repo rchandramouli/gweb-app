@@ -11,7 +11,6 @@
 
 #include <mysql.h>
 
-#define DEBUG
 #include <gweb/common.h>
 #include <gweb/json_struct.h>
 #include <gweb/json_api.h>
@@ -29,7 +28,7 @@
 #if 0
 | FirstName     | varchar(20) | YES  |     | NULL    |       |
 | LastName      | varchar(20) | YES  |     | NULL    |       |
-| Email         | varchar(40) | YES  |     | NULL    |       |
+| Email         | varchar(40) | NO   | UNI | NULL    |       |
 | Phone         | char(10)    | NO   | PRI | NULL    |       |
 | Address1      | varchar(40) | YES  |     | NULL    |       |
 | Address2      | varchar(40) | YES  |     | NULL    |       |
@@ -41,7 +40,6 @@
 | RegisteredOn  | date        | YES  |     | NULL    |       |
 | LastUpdatedOn | date        | YES  |     | NULL    |       |
 | Validated     | tinyint(1)  | YES  |     | NULL    |       |
-+---------------+-------------+------+-----+---------+-------+
 #endif
 
 static MYSQL *g_mysql_ctx;

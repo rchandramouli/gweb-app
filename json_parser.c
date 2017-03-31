@@ -9,7 +9,6 @@
 #include <stdint.h>
 #include <signal.h>
 
-#define DEBUG
 #include <gweb/common.h>
 #include <gweb/json_api.h>
 #include <gweb/mysqldb_api.h>

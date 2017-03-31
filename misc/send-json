@@ -1,13 +1,18 @@
-curl -H "Content-Type: application/json" -X POST -d '{"registration":{"fname":"Joe","lname":"Doe","email":"xyz@abc.com","phone":"1023456789","add1":"somewhere-1","add2":"somewhere2","add3":"somewhere3","country":"India","state":"MZ","pincode":"210010","password":"ASHihdihA2677DGSaf"}}' http://localhost:8800
+PORT=$1
+if [ -z "$PORT" ]; then
+    PORT=8800
+fi
 
-curl -H "Content-Type: application/json" -X POST -d '{"login":{"email":"test@gmail.com","password":"AnotherTestPassword"}}' http://localhost:8800
+curl -H "Content-Type: application/json" -X POST -d '{"registration":{"fname":"Joe","lname":"Doe","email":"xyz@abc.com","phone":"1023456789","add1":"somewhere-1","add2":"somewhere2","add3":"somewhere3","country":"India","state":"MZ","pincode":"210010","password":"ASHihdihA2677DGSaf"}}' http://localhost:${PORT}
 
-curl -H "Content-Type: application/json" -X POST -d '{"login":{"email":"xyz@abc.com","password":"PasswordInvalid"}}' http://localhost:8800
+curl -H "Content-Type: application/json" -X POST -d '{"login":{"email":"test@gmail.com","password":"AnotherTestPassword"}}' http://localhost:${PORT}
 
-curl -H "Content-Type: application/json" -X POST -d '{"login":{"email":"xyz@abc.com","password":"ASHihdihA2677DGSaf"}}' http://localhost:8800
+curl -H "Content-Type: application/json" -X POST -d '{"login":{"email":"xyz@abc.com","password":"PasswordInvalid"}}' http://localhost:${PORT}
+
+curl -H "Content-Type: application/json" -X POST -d '{"login":{"email":"xyz@abc.com","password":"ASHihdihA2677DGSaf"}}' http://localhost:${PORT}
 
 ## POST / HTTP/1.1
-## HOST:127.0.0.1:8800
+## HOST:127.0.0.1:${PORT}
 ## Content-Length:65
 ## Content-Type:application/json
 ## 
