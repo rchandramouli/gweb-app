@@ -8,7 +8,10 @@
 
 #include <mysql.h>
 
-#define DEBUG
+#ifndef DEBUG
+#  define DEBUG
+#endif
+
 #include <gweb/common.h>
 #include <gweb/mysqldb_conf.h>
 #include <gweb/mysqldb_log.h>

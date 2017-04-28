@@ -1,7 +1,7 @@
 
-PRODUCTION_PATH ?= /home/rchandramouli/gotcha/production
+PRODUCTION_PATH ?= /pub/sources/gotcha/production
 
-COMMON_CFLAGS := -I$(shell pwd)
+COMMON_CFLAGS := -I$(shell pwd) -DDEBUG -DLOG_TO_SYSLOG
 
 GWEB_SERVER_BIN := bin/gwebserver
 

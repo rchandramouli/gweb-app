@@ -68,6 +68,8 @@ gweb_mysql_handle_registration (j2c_map_t *j2cmap)
 
     qrybuf[len] = '\0';
 
+    gweb_mysql_ping();
+
     if (mysql_query(g_mysql_ctx, qrybuf)) {
 	report_mysql_error_noclose(g_mysql_ctx);
     }
@@ -90,6 +92,8 @@ gweb_mysql_handle_login (j2c_map_t *j2cmap)
 		   jrecord->fields[0], jrecord->fields[1]);
 
     qrybuf[len] = '\0';
+
+    gweb_mysql_ping();
 
     if (mysql_query(g_mysql_ctx, qrybuf)) {
 	report_mysql_error_noclose(g_mysql_ctx);
@@ -119,9 +123,51 @@ gweb_mysql_shutdown (void)
     return 0;
 }
 
+static int
+gweb_mysql_connect (MYSQL *ctx)
+{
+    if (!ctx) {
+        return -1;
+    }
+
+    if (mysql_real_connect(ctx,
+                           MYSQL_DB_HOST,
+                           MYSQL_DB_USER,
+                           MYSQL_DB_PASSWORD,
+                           MYSQL_DB_NAMESPACE,
+                           0,
+                           NULL,
+                           CLIENT_MULTI_STATEMENTS) == NULL) {
+        return -1;
+    }
+
+    return 0;
+}
+
+/*
+ * Check / reconnect MySQL connection
+ */
+int
+gweb_mysql_ping (void)
+{
+    unsigned long thid_before_ping, thid_after_ping;
+
+    thid_before_ping = mysql_thread_id(g_mysql_ctx);
+    mysql_ping(g_mysql_ctx);
+    thid_after_ping = mysql_thread_id(g_mysql_ctx);
+
+    if (thid_before_ping != thid_after_ping) {
+        log_debug("%s: MySQL reconnected!\n", __func__);
+    }
+
+    return 0;
+}
+
 int
 gweb_mysql_init (void)
 {
+    my_bool reconnect = 1;
+
     log_debug("Initializing schema, MySQL version = %s\n",
 	      mysql_get_client_info());
 
@@ -129,15 +175,10 @@ gweb_mysql_init (void)
 	report_mysql_error(g_mysql_ctx);
     }
 
-    if (mysql_real_connect(g_mysql_ctx,
-			   MYSQL_DB_HOST,
-			   MYSQL_DB_USER,
-			   MYSQL_DB_PASSWORD,
-			   MYSQL_DB_NAMESPACE,
-			   0,
-			   NULL,
-			   CLIENT_MULTI_STATEMENTS) == NULL) {
-	report_mysql_error(g_mysql_ctx);
+    mysql_options(g_mysql_ctx, MYSQL_OPT_RECONNECT, &reconnect);
+
+    if (gweb_mysql_connect(g_mysql_ctx)) {
+        report_mysql_error(g_mysql_ctx);
     }
 
     log_debug("MySQL connected!\n");

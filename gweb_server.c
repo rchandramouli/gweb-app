@@ -238,6 +238,10 @@ sig_kill_handler (int signum)
 
     gweb_mysql_shutdown();
 
+#ifdef LOG_TO_SYSLOG
+    closelog();
+#endif
+
     exit(0);
 }
 
@@ -274,8 +278,14 @@ daemonize_this_process (void)
     for (fd = sysconf(_SC_OPEN_MAX); fd >= 0; fd--)
         close(fd);
 
+#ifdef LOG_TO_SYSLOG
     /* Open the log file */
-    openlog("GWEB daemon", LOG_PID, LOG_DAEMON);
+    openlog("GWEB-DAEMON", LOG_PID, LOG_DAEMON);
+
+    setlogmask(LOG_MASK(LOG_DEBUG)  |
+               LOG_MASK(LOG_NOTICE) |
+               LOG_MASK(LOG_ERR));
+#endif
 }
 
 /*
