@@ -1,15 +1,60 @@
-PORT=$1
-if [ -z "$PORT" ]; then
-    PORT=8800
+if [ "$1" == "-aws" ]; then
+    TO_HOST=ec2-52-221-196-164.ap-southeast-1.compute.amazonaws.com
+else
+    TO_HOST=localhost
 fi
 
-curl -H "Content-Type: application/json" -X POST -d '{"registration":{"fname":"Joe","lname":"Doe","email":"xyz@abc.com","phone":"1023456789","add1":"somewhere-1","add2":"somewhere2","add3":"somewhere3","country":"India","state":"MZ","pincode":"210010","password":"ASHihdihA2677DGSaf"}}' http://localhost:${PORT}
+PORT=$2
+if [ -z "$PORT" -a "$1" != "-aws" ]; then
+    PORT=:8800
+fi
 
-curl -H "Content-Type: application/json" -X POST -d '{"login":{"email":"test@gmail.com","password":"AnotherTestPassword"}}' http://localhost:${PORT}
+TO_HOST=${TO_HOST}${PORT}
 
-curl -H "Content-Type: application/json" -X POST -d '{"login":{"email":"xyz@abc.com","password":"PasswordInvalid"}}' http://localhost:${PORT}
+uID=""
 
-curl -H "Content-Type: application/json" -X POST -d '{"login":{"email":"xyz@abc.com","password":"ASHihdihA2677DGSaf"}}' http://localhost:${PORT}
+## uID: 2I89zWNLqgE
+echo -e "\n---- REGISTRATION ----"
+CURL_RESP=$(curl -H "Content-Type: application/json" -X POST -d '{"registration":{"fname":"Joe","lname":"Doe","email":"xyz@abc.com","phone":"1023456789","password":"ASHihdihA2677DGSaf"}}' http://${TO_HOST} 2>/dev/null)
+echo ${CURL_RESP}
+echo ${CURL_RESP} | grep "200" > /dev/null
+if [ $? -eq 0 ]; then
+    uID=$(echo ${CURL_RESP} | grep -o "id\":\".*\"" | cut -f2 -d: | cut -f2 -d'"')
+fi
+
+echo -e "\n---- LOGIN ----"
+CURL_RESP=$(curl -H "Content-Type: application/json" -X POST -d '{"login":{"email":"xyz@abc.com","password":"ASHihdihA2677DGSaf"}}' http://${TO_HOST} 2>/dev/null)
+echo ${CURL_RESP}
+if [ -z "${uID}" ]; then
+    echo ${CURL_RESP} | grep "200" > /dev/null
+    if [ $? -eq 0 ]; then
+        uID=$(echo ${CURL_RESP} | grep -o "id\":\".*\"" | cut -f2 -d: | cut -f2 -d'"')
+    fi
+fi
+
+echo "USER ID: [${uID}]"
+
+echo -e "\n---- AVATAR UPDATE ----"
+curl -H "Content-Type: application/json" -X POST -d '{"update_avatar":{"id":"'${uID}'","url":"http://amazon-s3-url012345.com/user001.jpg"}}' http://${TO_HOST}
+
+echo -e "\n---- PROFILE UPDATE-1 ----"
+curl -H "Content-Type: application/json" -X POST -d '{"update_profile":{"id":"'${uID}'","add1":"somewhere-1","add2":"somewhere2","add3":"somewhere3","country":"India","state":"MZ","pincode":"210010","facebook_h":"foobar_fb","twitter_h":"foobar_twt"}}' http://${TO_HOST}
+
+echo -e "\n---- PROFILE UPDATE-2 (change-fb, remove-twt) ----"
+curl -H "Content-Type: application/json" -X POST -d '{"update_profile":{"id":"'${uID}'","add1":"Here-1","add2":"Here-2","add3":"somewhere3","country":"India","state":"MZ","pincode":"210010","facebook_h":"barbar_fb","twitter_h":""}}' http://${TO_HOST}
+
+echo -e "\n---- PROFILE UPDATE-3 (add-twt) ----"
+curl -H "Content-Type: application/json" -X POST -d '{"update_profile":{"id":"'${uID}'","add1":"Here-1","add2":"Here-2","add3":"somewhere3","country":"India","state":"MZ","pincode":"210010","twitter_h":"foofoo_twt"}}' http://${TO_HOST}
+
+echo -e "\n---- REGISTRATION ----"
+CURL_RESP=$(curl -H "Content-Type: application/json" -X POST -d '{"registration":{"fname":"Micky","lname":"Moe","email":"mimi@moe.com","phone":"9038211763","password":"AA13!!227798Ajhb"}}' http://${TO_HOST} 2>/dev/null)
+echo ${CURL_RESP}
+echo ${CURL_RESP} | grep "200" > /dev/null
+if [ $? -eq 0 ]; then
+    uID=$(echo ${CURL_RESP} | grep -o "id\":\".*\"" | cut -f2 -d: | cut -f2 -d'"')
+fi
+
+echo -e "\n"
 
 ## POST / HTTP/1.1
 ## HOST:127.0.0.1:${PORT}
