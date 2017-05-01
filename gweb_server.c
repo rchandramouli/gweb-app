@@ -115,16 +115,24 @@ json_post_handler (void *coninfo_cls, enum MHD_ValueKind kind, const char *key,
 		   size_t size)
 {
     struct http_cxn_info *httpcxn = coninfo_cls;
+    char *response = NULL;
+    int status;
 
-    if (gweb_json_post_processor(data, size)) {
+    if (gweb_json_post_processor(data, size, &response, &status)) {
 	log_error("JSON post processor failed to handle API\n");
 	return MHD_NO;
     }
 
-    httpcxn->response = mhd_frame_response(httpcxn->connection,
-					   HTTP_RESPONSE_200_OK);
-    httpcxn->status_code = MHD_HTTP_OK;
-
+    if (response != NULL) {
+        httpcxn->response = mhd_frame_response(httpcxn->connection,
+                                               (const char *)response);
+        httpcxn->status_code = (status == 0) ? MHD_HTTP_OK: MHD_HTTP_NOT_FOUND;
+        free(response);
+    } else {
+        httpcxn->response = mhd_frame_response(httpcxn->connection,
+                                               HTTP_RESPONSE_200_OK);
+        httpcxn->status_code = MHD_HTTP_OK;
+    }
     return MHD_YES;
 }
 
