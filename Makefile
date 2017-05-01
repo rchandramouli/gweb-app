@@ -8,7 +8,8 @@ GWEB_SERVER_BIN := bin/gwebserver
 GWEB_SERVER_SRC := \
     gweb_server.c \
     mysqldb_handler.c \
-    json_parser.c
+    json_parser.c \
+    uid.c
 
 GWEB_SERVER_CFLAGS := \
     $(COMMON_CFLAGS) -I$(PRODUCTION_PATH)/include \
