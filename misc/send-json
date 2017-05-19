@@ -1,3 +1,5 @@
+#!/bin/bash
+
 if [ "$1" == "-aws" ]; then
     TO_HOST=ec2-52-221-196-164.ap-southeast-1.compute.amazonaws.com
 else
@@ -6,60 +8,75 @@ fi
 
 PORT=$2
 if [ -z "$PORT" -a "$1" != "-aws" ]; then
-    PORT=:8800
+    PORT=":8800"
 fi
 
 TO_HOST=${TO_HOST}${PORT}
+echo "SENDING TO: ${TO_HOST}"
 
 uID=""
 
-## uID: 2I89zWNLqgE
+function send_json() {
+    local jmsg="$1"
+
+    echo "SEND: ${jmsg}"
+    resp=$(curl -H "Content-Type: application/json" -X POST -d ${jmsg} http://${TO_HOST} 2>/dev/null)
+    echo "RECV: ${resp}"
+}
+
+function send_json_set_uid() {
+    local jmsg="$1"
+
+    echo "SEND: ${jmsg}"
+    resp=$(curl -H "Content-Type: application/json" -X POST -d ${jmsg} http://${TO_HOST} 2>/dev/null)
+    echo "RECV: ${resp}"
+
+    echo ${resp} | grep "200" > /dev/null
+    if [ $? -eq 0 ]; then
+	uID=$(echo ${resp} | grep -o "id\":\".*\"" | cut -f2 -d: | cut -f2 -d'"')
+    fi
+}
+
 echo -e "\n---- REGISTRATION ----"
-CURL_RESP=$(curl -H "Content-Type: application/json" -X POST -d '{"registration":{"fname":"Joe","lname":"Doe","email":"xyz@abc.com","phone":"1023456789","password":"ASHihdihA2677DGSaf"}}' http://${TO_HOST} 2>/dev/null)
-echo ${CURL_RESP}
-echo ${CURL_RESP} | grep "200" > /dev/null
-if [ $? -eq 0 ]; then
-    uID=$(echo ${CURL_RESP} | grep -o "id\":\".*\"" | cut -f2 -d: | cut -f2 -d'"')
-fi
+send_json '{"registration":{"fname":"Joe","lname":"Doe","email":"xyz@abc.com","phone":"1023456789","password":"ASHihdihA2677DGSaf"}}'
 
 echo -e "\n---- LOGIN ----"
-CURL_RESP=$(curl -H "Content-Type: application/json" -X POST -d '{"login":{"email":"xyz@abc.com","password":"ASHihdihA2677DGSaf"}}' http://${TO_HOST} 2>/dev/null)
-echo ${CURL_RESP}
-if [ -z "${uID}" ]; then
-    echo ${CURL_RESP} | grep "200" > /dev/null
-    if [ $? -eq 0 ]; then
-        uID=$(echo ${CURL_RESP} | grep -o "id\":\".*\"" | cut -f2 -d: | cut -f2 -d'"')
-    fi
-fi
+send_json_set_uid '{"login":{"email":"xyz@abc.com","password":"ASHihdihA2677DGSaf"}}'
 
 echo "USER ID: [${uID}]"
 
 echo -e "\n---- AVATAR UPDATE ----"
-curl -H "Content-Type: application/json" -X POST -d '{"update_avatar":{"id":"'${uID}'","url":"http://amazon-s3-url012345.com/user001.jpg"}}' http://${TO_HOST}
+send_json '{"update_avatar":{"id":"'${uID}'","url":"http://amazon-s3-url012345.com/user001.jpg"}}'
 
 echo -e "\n---- PROFILE UPDATE-1 ----"
-curl -H "Content-Type: application/json" -X POST -d '{"update_profile":{"id":"'${uID}'","add1":"somewhere-1","add2":"somewhere2","add3":"somewhere3","country":"India","state":"MZ","pincode":"210010","facebook_h":"foobar_fb","twitter_h":"foobar_twt"}}' http://${TO_HOST}
+send_json '{"update_profile":{"id":"'${uID}'","add1":"somewhere-1","add2":"somewhere2","add3":"somewhere3","country":"India","state":"MZ","pincode":"210010","facebook_h":"foobar_fb","twitter_h":"foobar_twt"}}'
 
 echo -e "\n---- PROFILE UPDATE-2 (change-fb, remove-twt) ----"
-curl -H "Content-Type: application/json" -X POST -d '{"update_profile":{"id":"'${uID}'","add1":"Here-1","add2":"Here-2","add3":"somewhere3","country":"India","state":"MZ","pincode":"210010","facebook_h":"barbar_fb","twitter_h":""}}' http://${TO_HOST}
+send_json '{"update_profile":{"id":"'${uID}'","add1":"Here-1","add2":"Here-2","add3":"somewhere3","country":"India","state":"MZ","pincode":"210010","facebook_h":"barbar_fb","twitter_h":""}}'
+
+echo -e "\n---- LOGIN ----"
+send_json_set_uid '{"login":{"email":"xyz@abc.com","password":"ASHihdihA2677DGSaf"}}'
 
 echo -e "\n---- PROFILE UPDATE-3 (add-twt) ----"
-curl -H "Content-Type: application/json" -X POST -d '{"update_profile":{"id":"'${uID}'","add1":"Here-1","add2":"Here-2","add3":"somewhere3","country":"India","state":"MZ","pincode":"210010","twitter_h":"foofoo_twt"}}' http://${TO_HOST}
+send_json '{"update_profile":{"id":"'${uID}'","twitter_h":"foofoo_twt"}}'
+
+echo -e "\n---- LOGIN ----"
+send_json_set_uid '{"login":{"email":"xyz@abc.com","password":"ASHihdihA2677DGSaf"}}'
 
 echo -e "\n---- REGISTRATION ----"
-CURL_RESP=$(curl -H "Content-Type: application/json" -X POST -d '{"registration":{"fname":"Micky","lname":"Moe","email":"mimi@moe.com","phone":"9038211763","password":"AA13!!227798Ajhb"}}' http://${TO_HOST} 2>/dev/null)
-echo ${CURL_RESP}
-echo ${CURL_RESP} | grep "200" > /dev/null
-if [ $? -eq 0 ]; then
-    uID=$(echo ${CURL_RESP} | grep -o "id\":\".*\"" | cut -f2 -d: | cut -f2 -d'"')
-fi
+send_json '{"registration":{"fname":"Micky","lname":"Moe","email":"mimi@moe.com","phone":"9038211763","password":"AA13!!227798Ajhb"}}'
+
+echo -e "\n---- LOGIN (incorrect password) ----"
+send_json_set_uid '{"login":{"email":"mimi@moe.com","password":"ASHihdihA2677DGSaf"}}'
+
+echo -e "\n---- LOGIN (correct password) ----"
+send_json_set_uid '{"login":{"email":"mimi@moe.com","password":"AA13!!227798Ajhb"}}'
+echo "USER ID: [${uID}]"
+
+echo -e "\n---- PROFILE UPDATE-4 (add address, twt) ----"
+send_json '{"update_profile":{"id":"'${uID}'","add1":"elsewhere-1","add2":"","country":"India","state":"MZ","pincode":"342110","twitter_h":"notweet_t"}}'
+
+echo -e "\n---- LOGIN (correct password) ----"
+send_json '{"login":{"email":"mimi@moe.com","password":"AA13!!227798Ajhb"}}'
 
 echo -e "\n"
-
-## POST / HTTP/1.1
-## HOST:127.0.0.1:${PORT}
-## Content-Length:65
-## Content-Type:application/json
-## 
-## {"login":{"email":"xyz@abc.com","password":"ASHihdihA26d7DGSaf"}}
-## 
