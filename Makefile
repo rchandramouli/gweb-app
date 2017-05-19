@@ -1,7 +1,10 @@
 
 PRODUCTION_PATH ?= /pub/sources/gotcha/production
 
-COMMON_CFLAGS := -I$(shell pwd) -DDEBUG -DLOG_TO_SYSLOG
+DEBUG_FLAGS      := -DDEBUG
+PRODUCTION_FLAGS :=
+
+COMMON_CFLAGS := -DLOG_TO_SYSLOG -I$(shell pwd)
 
 GWEB_SERVER_BIN := bin/gwebserver
 
@@ -32,13 +35,24 @@ MYSQL_SCHEMA_LDFLAGS := $(shell mysql_config --libs)
 
 ALL_BINS := $(GWEB_SERVER_BIN) $(MYSQL_SCHEMA_BIN)
 
-all: $(ALL_BINS)
+.PHONY: build_env_setup
+
+debug: EXTRA_CFLAGS := $(DEBUG_FLAGS)
+debug: all
+
+production: EXTRA_CFLAGS := $(PRODUCTION_FLAGS)
+production: all
+
+all: build_env_setup $(ALL_BINS)
+
+build_env_setup:
+	mkdir -p bin
 
 $(GWEB_SERVER_BIN): $(GWEB_SERVER_SRC)
-	$(CC) -o $@ $^ $(GWEB_SERVER_CFLAGS) $(GWEB_SERVER_LDFLAGS)
+	$(CC) -o $@ $^ $(EXTRA_CFLAGS) $(GWEB_SERVER_CFLAGS) $(GWEB_SERVER_LDFLAGS)
 
 $(MYSQL_SCHEMA_BIN): $(MYSQL_SCHEMA_SRC)
-	$(CC) -o $@ $^ $(MYSQL_SCHEMA_CFLAGS) $(MYSQL_SCHEMA_LDFLAGS)
+	$(CC) -o $@ $^ $(EXTRA_CFLAGS) $(MYSQL_SCHEMA_CFLAGS) $(MYSQL_SCHEMA_LDFLAGS)
 
 clean:
 	rm -f *~ *.o $(ALL_BINS) *.d
