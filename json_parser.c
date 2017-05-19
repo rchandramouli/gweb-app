@@ -77,6 +77,19 @@ static const char *_table_login_resp_fields[] = {
     [FIELD_LOGIN_RESP_CODE] = "code",
     [FIELD_LOGIN_RESP_DESC] = "description",
     [FIELD_LOGIN_RESP_UID] = "id",
+    [FIELD_LOGIN_RESP_FNAME] = "fname",
+    [FIELD_LOGIN_RESP_LNAME] = "lname",
+    [FIELD_LOGIN_RESP_EMAIL] = "email",
+    [FIELD_LOGIN_RESP_PHONE] = "phone",
+    [FIELD_LOGIN_RESP_ADDRESS1] = "add1",
+    [FIELD_LOGIN_RESP_ADDRESS2] = "add2",
+    [FIELD_LOGIN_RESP_ADDRESS3] = "add3",
+    [FIELD_LOGIN_RESP_COUNTRY] = "country",
+    [FIELD_LOGIN_RESP_STATE] = "state",
+    [FIELD_LOGIN_RESP_PINCODE] = "pincode",
+    [FIELD_LOGIN_RESP_FACEBOOK_HANDLE] = "facebook_h",
+    [FIELD_LOGIN_RESP_TWITTER_HANDLE] = "twitter_h",
+    [FIELD_LOGIN_RESP_AVATAR_URL] = "url",
 };
 
 static const char *_table_avatar_resp_fields[] = {
@@ -131,7 +144,7 @@ static const char *_table_avatar_resp_fields[] = {
  * Response generator allocates memory and expects the higher POST
  * responder to free it
  */
-#define MAX_RESPONSE_BYTES (256)
+#define MAX_RESPONSE_BYTES (2048)
 
 #define json_response_generator(name, tbl)                              \
     int gweb_json_gen_response_##tbl (j2c_resp_t *j2cresp,              \
@@ -162,7 +175,7 @@ static const char *_table_avatar_resp_fields[] = {
         /* Remove trailing ',' */                                       \
         (*response)[len-1] = '}';                                       \
         (*response)[len] = '\0';                                        \
-                                                                        \
+									\
         return 0;                                                       \
     }
 

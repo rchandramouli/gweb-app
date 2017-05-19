@@ -318,6 +318,26 @@ gweb_mysql_free_registration (j2c_resp_t *j2cresp)
     return 0;
 }
 
+static const char *login_qry_fields[] = {
+    [FIELD_LOGIN_RESP_CODE] = NULL,
+    [FIELD_LOGIN_RESP_DESC] = NULL,
+    [FIELD_LOGIN_RESP_UID] = "UserRegInfo.UID",
+    [FIELD_LOGIN_RESP_FNAME] = "UserRegInfo.FirstName",
+    [FIELD_LOGIN_RESP_LNAME] = "UserRegInfo.LastName",
+    [FIELD_LOGIN_RESP_EMAIL] = "UserRegInfo.Email",
+    [FIELD_LOGIN_RESP_PHONE] = "UserPhone.Phone",
+    [FIELD_LOGIN_RESP_ADDRESS1] = "UserAddress.Address1",
+    [FIELD_LOGIN_RESP_ADDRESS2] = "UserAddress.Address2",
+    [FIELD_LOGIN_RESP_ADDRESS3] = "UserAddress.Address3",
+    [FIELD_LOGIN_RESP_COUNTRY] = "UserAddress.Country",
+    [FIELD_LOGIN_RESP_STATE] = "UserAddress.State",
+    [FIELD_LOGIN_RESP_PINCODE] = "UserAddress.Pincode",
+    /* NOTE: Multi-record, using below hack */
+    [FIELD_LOGIN_RESP_FACEBOOK_HANDLE] = "UserSocialNetwork.NetworkType",
+    [FIELD_LOGIN_RESP_TWITTER_HANDLE] = "UserSocialNetwork.NetworkHandle",
+    [FIELD_LOGIN_RESP_AVATAR_URL] = "UserRegInfo.AvatarURL",
+};
+
 int
 gweb_mysql_handle_login (j2c_msg_t *j2cmsg, j2c_resp_t **j2cresp)
 {
@@ -326,14 +346,30 @@ gweb_mysql_handle_login (j2c_msg_t *j2cmsg, j2c_resp_t **j2cresp)
     MYSQL_RES *result;
 
     uint8_t qrybuf[MAX_MYSQL_QRYSZ];
-    int len = 0, ret = -1;
+    int len = 0, fld, ret = -1;
 
-    PUSH_BUF(qrybuf, len, "SELECT UID FROM UserRegInfo WHERE ");
-    PUSH_BUF(qrybuf, len, "Email='%s' AND Password='%s'",
-             jrecord->fields[FIELD_LOGIN_EMAIL],
-             jrecord->fields[FIELD_LOGIN_PASSWORD]);
+    PUSH_BUF(qrybuf, len, "SELECT ");
+
+    for (fld = FIELD_LOGIN_RESP_CODE; fld < FIELD_LOGIN_RESP_MAX; fld++) {
+	if (login_qry_fields[fld] == NULL)
+	    PUSH_BUF(qrybuf, len, "NULL,");
+	else
+	    PUSH_BUF(qrybuf, len, "%s,", login_qry_fields[fld]);
+    }
+
+    len--; /* Strip leading ',' */
+
+    PUSH_BUF(qrybuf, len, " FROM UserRegInfo "
+	     "LEFT JOIN UserPhone USING(UID) "
+	     "LEFT JOIN UserSocialNetwork USING(UID) "
+	     "LEFT JOIN UserAddress USING(UID) "
+	     "WHERE UserRegInfo.Email='%s' AND UserRegInfo.Password='%s'",
+	     jrecord->fields[FIELD_LOGIN_EMAIL],
+	     jrecord->fields[FIELD_LOGIN_PASSWORD]);
     qrybuf[len] = '\0';
 
+    log_debug("%s: %s\n", __func__, qrybuf);
+    
     gweb_mysql_ping();
 
     if (mysql_query(g_mysql_ctx, qrybuf)) {
@@ -346,7 +382,7 @@ gweb_mysql_handle_login (j2c_msg_t *j2cmsg, j2c_resp_t **j2cresp)
         goto __bail_out;
     }
 
-    if (mysql_num_rows(result) == 1) {
+    if (mysql_num_rows(result) >= 1) {
         MYSQL_ROW row;
 
         if ((row = mysql_fetch_row(result)) == NULL) {
@@ -358,8 +394,40 @@ gweb_mysql_handle_login (j2c_msg_t *j2cmsg, j2c_resp_t **j2cresp)
                                     GWEB_MYSQL_OK,
                                     j2cresp);
 
-        (*j2cresp)->login.fields[FIELD_LOGIN_RESP_UID] =
-            strndup(row[0], strlen(row[0]));
+	/* Fetch profiles first and then loop to fetch social network
+	 * information.
+	 */
+	for (fld = FIELD_LOGIN_RESP_UID; fld < FIELD_LOGIN_RESP_MAX; fld++) {
+	    if (fld == FIELD_LOGIN_RESP_FACEBOOK_HANDLE ||
+		fld == FIELD_LOGIN_RESP_TWITTER_HANDLE) {
+		continue;
+	    }
+	    if (row[fld]) {
+		(*j2cresp)->login.fields[fld] =
+		    strndup(row[fld], strlen(row[fld]));
+	    }
+	}
+	log_debug("%s: <<< prepared response fields!!!\n", __func__);
+	do {
+	    char *network_type = row[FIELD_LOGIN_RESP_FACEBOOK_HANDLE];
+	    int handle_idx = FIELD_LOGIN_RESP_TWITTER_HANDLE;
+
+	    if (network_type) {
+		if (strcasecmp(network_type, "facebook") == 0) {
+		    (*j2cresp)->login.fields[FIELD_LOGIN_RESP_FACEBOOK_HANDLE] =
+			strndup(row[handle_idx], strlen(row[handle_idx]));
+
+		} else if (strcasecmp(network_type, "twitter") == 0) {
+		    (*j2cresp)->login.fields[FIELD_LOGIN_RESP_TWITTER_HANDLE] =
+			strndup(row[handle_idx], strlen(row[handle_idx]));
+		}
+	    }
+	} while ((row = mysql_fetch_row(result)));
+
+    } else {
+	gweb_mysql_prepare_response(JSON_C_LOGIN_RESP,
+				    GWEB_MYSQL_ERR_NO_RECORD,
+				    j2cresp);
     }
     mysql_free_result(result);
 
@@ -375,11 +443,15 @@ __bail_out:
 int
 gweb_mysql_free_login (j2c_resp_t *j2cresp)
 {
+    int fld;
+
     if (j2cresp) {
         struct j2c_login_resp *resp = &j2cresp->login;
 
-        if (resp->fields[FIELD_LOGIN_RESP_UID])
-            free(resp->fields[FIELD_LOGIN_RESP_UID]);
+	for (fld = FIELD_LOGIN_RESP_UID; fld < FIELD_LOGIN_RESP_MAX; fld++) {
+	    if (resp->fields[fld])
+		free(resp->fields[fld]);
+	}
         free(j2cresp);
     }
     return 0;
@@ -485,6 +557,25 @@ gweb_mysql_update_social_network (char *qrybuf, struct j2c_profile_msg *jrecord,
     return len;
 }
 
+/* If the given string is "" then set the field to NULL, else update
+ * the field
+ */
+#define STR_OR_NULL_QRY(fld, fldname)				\
+    if (jrecord->fields[fld]) {					\
+	if (strlen(jrecord->fields[fld]) == 0) {		\
+	    PUSH_BUF(qrybuf, len, fldname "NULL,");		\
+	} else {						\
+	    PUSH_BUF(qrybuf, len, fldname "'%s',",		\
+		     jrecord->fields[fld]);			\
+	}							\
+    }
+
+#define STR_OR_NULL_INSERT_QRY(fld, fldname)	\
+    STR_OR_NULL_QRY(fld, fldname)		\
+    else {					\
+	PUSH_BUF(qrybuf, len, "NULL,");		\
+    }
+
 int
 gweb_mysql_handle_profile (j2c_msg_t *j2cmsg, j2c_resp_t **j2cresp)
 {
@@ -492,6 +583,7 @@ gweb_mysql_handle_profile (j2c_msg_t *j2cmsg, j2c_resp_t **j2cresp)
 
     uint8_t qrybuf[MAX_MYSQL_QRYSZ], *db_qry1, *db_qry2, *db_qry3;
     int record_found = 0, sn_facebook_found = 0, sn_twitter_found = 0;
+    int update_fields = 0;
     int len = 0, tmp_len, ret;
     int bail_out_err = GWEB_MYSQL_ERR_UNKNOWN;
 
@@ -538,42 +630,58 @@ gweb_mysql_handle_profile (j2c_msg_t *j2cmsg, j2c_resp_t **j2cresp)
     }
     sn_twitter_found = ret;
 
-    db_qry2 = db_qry3 = NULL;
+    db_qry1 = db_qry2 = db_qry3 = NULL;
 
     /* Update record if exists or else, insert. Note that, we have a
      * case where there is no primary key in this table. Check for
      * other social network handles.
      */
     len = 0;
-    db_qry1 = &qrybuf[len];
 
-    if (record_found) {
-        PUSH_BUF(qrybuf, len, "UPDATE UserAddress SET Address1='%s', "
-                 "Address2='%s', Address3='%s', State='%s', Pincode='%s', "
-                 "Country='%s' WHERE UID='%s' AND AddressType='%s'",
-                 jrecord->fields[FIELD_PROFILE_ADDRESS1],
-                 jrecord->fields[FIELD_PROFILE_ADDRESS2],
-                 jrecord->fields[FIELD_PROFILE_ADDRESS3],
-                 jrecord->fields[FIELD_PROFILE_STATE],
-                 jrecord->fields[FIELD_PROFILE_PINCODE],
-                 jrecord->fields[FIELD_PROFILE_COUNTRY],
-                 jrecord->fields[FIELD_PROFILE_UID],
-                 "permanent");
-    } else {
+    /* Check if there is atleast one field to update */
+    if (jrecord->fields[FIELD_PROFILE_ADDRESS1] ||
+	jrecord->fields[FIELD_PROFILE_ADDRESS2] ||
+	jrecord->fields[FIELD_PROFILE_ADDRESS3] ||
+	jrecord->fields[FIELD_PROFILE_STATE] ||
+	jrecord->fields[FIELD_PROFILE_PINCODE] ||
+	jrecord->fields[FIELD_PROFILE_COUNTRY]) {
+	update_fields = 1;
+    }
+
+    if (record_found && update_fields) {
+	PUSH_BUF(qrybuf, len, "UPDATE UserAddress SET ");
+	STR_OR_NULL_QRY(FIELD_PROFILE_ADDRESS1, "Address1=");
+	STR_OR_NULL_QRY(FIELD_PROFILE_ADDRESS2, "Address2=");
+	STR_OR_NULL_QRY(FIELD_PROFILE_ADDRESS3, "Address3=");
+	STR_OR_NULL_QRY(FIELD_PROFILE_STATE, "State=");
+	STR_OR_NULL_QRY(FIELD_PROFILE_PINCODE, "Pincode=");
+	STR_OR_NULL_QRY(FIELD_PROFILE_COUNTRY, "Country=");
+	len--; /* Strip leading ',' */
+	PUSH_BUF(qrybuf, len, " WHERE UID='%s' AND AddressType='%s'",
+		 jrecord->fields[FIELD_PROFILE_UID], "permanent");
+
+	db_qry1 = &qrybuf[0];
+	qrybuf[len++] = '\0';
+
+    } else if (!record_found) {
         PUSH_BUF(qrybuf, len, "INSERT INTO UserAddress "
                  "(UID, AddressType, Address1, Address2, Address3, State, "
-                 "Pincode, Country) VALUES ('%s', '%s', '%s', '%s', '%s', "
-                 "'%s', '%s', '%s')",
-                 jrecord->fields[FIELD_PROFILE_UID],
-                 "permanent",
-                 jrecord->fields[FIELD_PROFILE_ADDRESS1],
-                 jrecord->fields[FIELD_PROFILE_ADDRESS2],
-                 jrecord->fields[FIELD_PROFILE_ADDRESS3],
-                 jrecord->fields[FIELD_PROFILE_STATE],
-                 jrecord->fields[FIELD_PROFILE_PINCODE],
-                 jrecord->fields[FIELD_PROFILE_COUNTRY]);
+                 "Pincode, Country) VALUES ('%s', '%s', ",
+		 jrecord->fields[FIELD_PROFILE_UID],
+		 "permanent");
+	STR_OR_NULL_INSERT_QRY(FIELD_PROFILE_ADDRESS1, "");
+	STR_OR_NULL_INSERT_QRY(FIELD_PROFILE_ADDRESS2, "");
+	STR_OR_NULL_INSERT_QRY(FIELD_PROFILE_ADDRESS3, "");
+	STR_OR_NULL_INSERT_QRY(FIELD_PROFILE_STATE, "");
+	STR_OR_NULL_INSERT_QRY(FIELD_PROFILE_PINCODE, "");
+	STR_OR_NULL_INSERT_QRY(FIELD_PROFILE_COUNTRY, "");
+	len--; /* Strip leading ',' */
+
+	PUSH_BUF(qrybuf, len, ")");
+
+	db_qry1 = &qrybuf[0];
+	qrybuf[len++] = '\0';
     }
-    qrybuf[len++] = '\0';
 
     if (jrecord->fields[FIELD_PROFILE_FACEBOOK_HANDLE]) {
         db_qry2 = &qrybuf[len];
