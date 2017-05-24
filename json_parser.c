@@ -162,7 +162,7 @@ static const char *_table_avatar_resp_fields[] = {
             return 1;                                                   \
         }                                                               \
                                                                         \
-        len += sprintf(*response+len, "\"status\":{");                  \
+        len += sprintf(*response+len, "{\"status\":{");	                \
                                                                         \
         for_each_table_findex(findex, tbl##_resp) {                     \
             if (j2ctbl->fields[findex]) {                               \
@@ -174,8 +174,9 @@ static const char *_table_avatar_resp_fields[] = {
                                                                         \
         /* Remove trailing ',' */                                       \
         (*response)[len-1] = '}';                                       \
+        (*response)[len++] = '}';                                       \
         (*response)[len] = '\0';                                        \
-									\
+                                                                        \
         return 0;                                                       \
     }
 
@@ -243,7 +244,6 @@ gweb_json_post_processor (const char *data, size_t size, char **response, int *s
     struct json_map_info *j2cinfo;
     j2c_msg_t j2cmsg;
     j2c_resp_t *j2cresp;
-    char *resp_string;
     int api_index, ret = -1;
 
     if (!jobj) {
@@ -265,7 +265,11 @@ gweb_json_post_processor (const char *data, size_t size, char **response, int *s
                 j2cresp = NULL;
                 log_debug("<JSON-PARSE: post-processor> handling API backend: %s\n",
                           j2cinfo->api_name);
+
                 ret = (*j2cinfo->api_db_handler)(&j2cmsg, &j2cresp);
+                if (status) {
+                    *status = ret;
+                }
 
                 /* TBD: Handle errors */
                 /* Handle response structure from DB layer */
@@ -279,11 +283,6 @@ gweb_json_post_processor (const char *data, size_t size, char **response, int *s
                 if (j2cinfo->api_db_resp_free) {
                     (*j2cinfo->api_db_resp_free)(j2cresp);
                 }
-            }
-
-            /* Always set POST processor status to be okay */
-            if (status) {
-                *status = 0;
             }
 
             /* NOTE: we don't handle multiple JSON messages through a

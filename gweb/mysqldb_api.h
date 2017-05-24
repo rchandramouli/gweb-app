@@ -5,6 +5,12 @@
 
 #define MAX_MYSQL_QRYSZ    1024
 
+/* MySQL transaction error code */
+enum {
+    MYSQL_STATUS_OK = 0,
+    MYSQL_STATUS_FAIL = 1,
+};
+
 /*
  * MySQL APIs for queries
  */

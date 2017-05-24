@@ -234,13 +234,13 @@ gweb_mysql_handle_registration (j2c_msg_t *j2cmsg, j2c_resp_t **j2cresp)
         gweb_mysql_prepare_response(JSON_C_REGISTRATION_RESP,
                                     GWEB_MYSQL_ERR_UNKNOWN,
                                     j2cresp);
-        return 0;
+        return MYSQL_STATUS_FAIL;
     } else if (ret > 0) {
         /* Duplicate record */
         gweb_mysql_prepare_response(JSON_C_REGISTRATION_RESP,
                                     GWEB_MYSQL_ERR_DUPLICATE,
                                     j2cresp);
-        return 0;
+        return MYSQL_STATUS_FAIL;
     }
 
     /* UID is not already registered, update database */
@@ -294,7 +294,7 @@ gweb_mysql_handle_registration (j2c_msg_t *j2cmsg, j2c_resp_t **j2cresp)
     (*j2cresp)->registration.fields[FIELD_REGISTRATION_RESP_UID] =
                 strndup(uid_str, strlen(uid_str));
 
-    return 0;
+    return MYSQL_STATUS_OK;
 
 __abort_transaction:
     report_mysql_error_noclose(g_mysql_ctx);
@@ -302,7 +302,7 @@ __abort_transaction:
     gweb_mysql_prepare_response(JSON_C_REGISTRATION_RESP,
                                 GWEB_MYSQL_ERR_UNKNOWN,
                                 j2cresp);
-    return 0;
+    return MYSQL_STATUS_FAIL;
 }
 
 int
@@ -315,7 +315,7 @@ gweb_mysql_free_registration (j2c_resp_t *j2cresp)
             free(resp->fields[FIELD_REGISTRATION_RESP_UID]);
         free(j2cresp);
     }
-    return 0;
+    return MYSQL_STATUS_OK;
 }
 
 static const char *login_qry_fields[] = {
@@ -346,7 +346,7 @@ gweb_mysql_handle_login (j2c_msg_t *j2cmsg, j2c_resp_t **j2cresp)
     MYSQL_RES *result;
 
     uint8_t qrybuf[MAX_MYSQL_QRYSZ];
-    int len = 0, fld, ret = -1;
+    int len = 0, fld, ret = MYSQL_STATUS_OK;
 
     PUSH_BUF(qrybuf, len, "SELECT ");
 
@@ -368,8 +368,6 @@ gweb_mysql_handle_login (j2c_msg_t *j2cmsg, j2c_resp_t **j2cresp)
 	     jrecord->fields[FIELD_LOGIN_PASSWORD]);
     qrybuf[len] = '\0';
 
-    log_debug("%s: %s\n", __func__, qrybuf);
-    
     gweb_mysql_ping();
 
     if (mysql_query(g_mysql_ctx, qrybuf)) {
@@ -407,7 +405,7 @@ gweb_mysql_handle_login (j2c_msg_t *j2cmsg, j2c_resp_t **j2cresp)
 		    strndup(row[fld], strlen(row[fld]));
 	    }
 	}
-	log_debug("%s: <<< prepared response fields!!!\n", __func__);
+
 	do {
 	    char *network_type = row[FIELD_LOGIN_RESP_FACEBOOK_HANDLE];
 	    int handle_idx = FIELD_LOGIN_RESP_TWITTER_HANDLE;
@@ -428,16 +426,17 @@ gweb_mysql_handle_login (j2c_msg_t *j2cmsg, j2c_resp_t **j2cresp)
 	gweb_mysql_prepare_response(JSON_C_LOGIN_RESP,
 				    GWEB_MYSQL_ERR_NO_RECORD,
 				    j2cresp);
+	ret = MYSQL_STATUS_FAIL;
     }
     mysql_free_result(result);
 
-    return 0;
+    return ret;
 
 __bail_out:
     gweb_mysql_prepare_response(JSON_C_LOGIN_RESP,
                                 GWEB_MYSQL_ERR_UNKNOWN,
                                 j2cresp);
-    return 0;
+    return MYSQL_STATUS_FAIL;
 }
 
 int
@@ -454,7 +453,7 @@ gweb_mysql_free_login (j2c_resp_t *j2cresp)
 	}
         free(j2cresp);
     }
-    return 0;
+    return MYSQL_STATUS_OK;
 }
 
 int
@@ -491,7 +490,7 @@ gweb_mysql_handle_avatar (j2c_msg_t *j2cmsg, j2c_resp_t **j2cresp)
     gweb_mysql_prepare_response(JSON_C_AVATAR_RESP,
                                 GWEB_MYSQL_OK,
                                 j2cresp);
-    return 0;
+    return MYSQL_STATUS_OK;
 
 __abort_transaction:
     gweb_mysql_abort_transaction();
@@ -499,7 +498,7 @@ __bail_out:
     gweb_mysql_prepare_response(JSON_C_AVATAR_RESP,
                                 GWEB_MYSQL_ERR_NO_RECORD,
                                 j2cresp);
-    return 0;
+    return MYSQL_STATUS_FAIL;
 }
 
 int
@@ -508,14 +507,14 @@ gweb_mysql_free_avatar (j2c_resp_t *j2cresp)
     if (j2cresp) {
         free(j2cresp);
     }
-    return 0;
+    return MYSQL_STATUS_OK;
 }
 
 static int
 gweb_mysql_query_social_network (const char *uid, const char *sn_type)
 {
     uint8_t qrybuf[MAX_MYSQL_QRYSZ];
-    int len = 0, ret;
+    int len = 0;
 
     PUSH_BUF(qrybuf, len, "SELECT UID from UserSocialNetwork WHERE UID='%s' "
              "AND NetworkType='%s'", uid, sn_type);
@@ -717,7 +716,7 @@ gweb_mysql_handle_profile (j2c_msg_t *j2cmsg, j2c_resp_t **j2cresp)
     gweb_mysql_prepare_response(JSON_C_PROFILE_RESP,
                                 GWEB_MYSQL_OK,
                                 j2cresp);
-    return 0;
+    return MYSQL_STATUS_OK;
 
 __abort_transaction:
     report_mysql_error_noclose(g_mysql_ctx);
@@ -727,7 +726,7 @@ __bail_out:
     gweb_mysql_prepare_response(JSON_C_PROFILE_RESP,
                                 bail_out_err,
                                 j2cresp);
-    return 0;
+    return MYSQL_STATUS_FAIL;
 }
 
 int
@@ -736,7 +735,7 @@ gweb_mysql_free_profile (j2c_resp_t *j2cresp)
     if (j2cresp) {
         free(j2cresp);
     }
-    return 0;
+    return MYSQL_STATUS_OK;
 }
 
 int
@@ -747,14 +746,14 @@ gweb_mysql_shutdown (void)
     if (g_mysql_ctx)
 	mysql_close(g_mysql_ctx);
 
-    return 0;
+    return MYSQL_STATUS_OK;
 }
 
 static int
 gweb_mysql_connect (MYSQL *ctx)
 {
     if (!ctx) {
-        return -1;
+        return MYSQL_STATUS_FAIL;
     }
 
     if (mysql_real_connect(ctx,
@@ -765,10 +764,10 @@ gweb_mysql_connect (MYSQL *ctx)
                            0,
                            NULL,
                            CLIENT_MULTI_STATEMENTS) == NULL) {
-        return -1;
+        return MYSQL_STATUS_FAIL;
     }
 
-    return 0;
+    return MYSQL_STATUS_OK;
 }
 
 /*
@@ -787,7 +786,7 @@ gweb_mysql_ping (void)
         log_debug("%s: MySQL reconnected!\n", __func__);
     }
 
-    return 0;
+    return MYSQL_STATUS_OK;
 }
 
 int
@@ -804,11 +803,11 @@ gweb_mysql_init (void)
 
     mysql_options(g_mysql_ctx, MYSQL_OPT_RECONNECT, &reconnect);
 
-    if (gweb_mysql_connect(g_mysql_ctx)) {
+    if (gweb_mysql_connect(g_mysql_ctx) != MYSQL_STATUS_OK) {
         report_mysql_error(g_mysql_ctx);
     }
 
     log_debug("MySQL connected!\n");
 
-    return 0;
+    return MYSQL_STATUS_OK;
 }

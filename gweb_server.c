@@ -44,22 +44,21 @@ struct http_cxn_info {
 static struct MHD_Daemon *g_daemon;
 
 #define HTTP_RESPONSE_404_NOTFOUND		\
-    "\"status\":{\"code\":\"404\","		\
-    "\"description\":\"Resource Not Found\"}"
+    "{\"status\":{\"code\":\"404\","		\
+    "\"description\":\"Resource Not Found\"}}"
 
 #define HTTP_RESPONSE_201_CREATED		\
-    "\"status\":{\"code\":\"201\","		\
-    "\"description\":\"Resource Created\"}"
+    "{\"status\":{\"code\":\"201\","		\
+    "\"description\":\"Resource Created\"}}"
 
 #define HTTP_RESPONSE_200_OK			\
-    "\"status\":{\"code\":\"200\","		\
-    "\"description\":\"OK\"}"
+    "{\"status\":{\"code\":\"200\","		\
+    "\"description\":\"OK\"}}"
 
 static struct MHD_Response *
 mhd_frame_response (struct MHD_Connection *connection, const char *json_http)
 {
     struct MHD_Response *resp;
-    int ret;
 
     resp = MHD_create_response_from_buffer(strlen(json_http),
 					   (char *)json_http,
@@ -94,6 +93,8 @@ mhd_send_page (struct http_cxn_info *httpcxn)
     MHD_destroy_response(httpcxn->response);
 
     httpcxn->response = NULL;
+
+    return MHD_YES;
 }
 
 static int check_json_content (void *cls, enum MHD_ValueKind kind, 
@@ -151,7 +152,7 @@ static int mhd_connection_handler (void *cls,
     struct http_cxn_info *httpcxn = *con_cls;
     struct http_cxn_info default_httpcxn;
 
-    int ret = MHD_NO, has_json;
+    int has_json = 0;
 
     log_debug("URL = <%s>\n", url);
     log_debug("METHOD = <%s>\n", method);
@@ -170,7 +171,6 @@ static int mhd_connection_handler (void *cls,
 	}
 	return MHD_YES;
     } else {
-	has_json = 0;
 	MHD_get_connection_values(connection, MHD_HEADER_KIND, &check_json_content, &has_json);
 	if (has_json) {
 	    log_debug("FOUND JSON content!\n");

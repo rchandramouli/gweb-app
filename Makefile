@@ -4,7 +4,8 @@ PRODUCTION_PATH ?= /pub/sources/gotcha/production
 DEBUG_FLAGS      := -DDEBUG
 PRODUCTION_FLAGS :=
 
-COMMON_CFLAGS := -DLOG_TO_SYSLOG -I$(shell pwd)
+NO_WARN_FLAGS := -Wno-pointer-sign
+COMMON_CFLAGS := -Wall -g -DLOG_TO_SYSLOG -I$(shell pwd) $(NO_WARN_FLAGS)
 
 GWEB_SERVER_BIN := bin/gwebserver
 
