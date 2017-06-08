@@ -9,6 +9,8 @@
 #include <stdint.h>
 #include <signal.h>
 
+#include <microhttpd.h>
+
 #include <gweb/common.h>
 #include <gweb/json_api.h>
 #include <gweb/mysqldb_api.h>
@@ -62,6 +64,30 @@ static const char *_table_avatar_msg_fields[] = {
     [FIELD_AVATAR_URL] = "url",
 };
 
+static const char *_table_cxn_channel_msg_fields[] = {
+    [FIELD_CXN_CHANNEL_UID] = "id",
+    [FIELD_CXN_CHANNEL_TO_UID] = "to",
+    [FIELD_CXN_CHANNEL_TYPE] = "channel",
+};
+
+static const char *_table_cxn_request_msg_fields[] = {
+    [FIELD_CXN_REQUEST_UID] = "id",
+    [FIELD_CXN_REQUEST_TO_UID] = "to",
+    [FIELD_CXN_REQUEST_FLAG] = "flag",
+};
+
+static const char *_table_cxn_request_query_msg_fields[] = {
+    [FIELD_CXN_REQUEST_QUERY_FROM_UID] = "from",
+    [FIELD_CXN_REQUEST_QUERY_TO_UID] = "to",
+    [FIELD_CXN_REQUEST_QUERY_FLAG] = "flag",
+};
+
+static const char *_table_cxn_channel_query_msg_fields[] = {
+    [FIELD_CXN_CHANNEL_QUERY_FROM_UID] = "from",
+    [FIELD_CXN_CHANNEL_QUERY_TO_UID] = "to",
+    [FIELD_CXN_CHANNEL_QUERY_TYPE] = "channel",
+};
+
 static const char *_table_registration_resp_fields[] = {
     [FIELD_REGISTRATION_RESP_CODE] = "code",
     [FIELD_REGISTRATION_RESP_DESC] = "description",
@@ -97,15 +123,53 @@ static const char *_table_avatar_resp_fields[] = {
     [FIELD_AVATAR_RESP_DESC] = "description",
 };
 
+static const char *_table_cxn_request_resp_fields[] = {
+    [FIELD_CXN_REQUEST_RESP_CODE] = "code",
+    [FIELD_CXN_REQUEST_RESP_DESC] = "description",
+};
+
+static const char *_table_cxn_channel_resp_fields[] = {
+    [FIELD_CXN_CHANNEL_RESP_CODE] = "code",
+    [FIELD_CXN_CHANNEL_RESP_DESC] = "description",
+};
+
+static const char *_table_cxn_request_query_resp_fields[] = {
+    [FIELD_CXN_REQUEST_QUERY_RESP_CODE] = "code",
+    [FIELD_CXN_REQUEST_QUERY_RESP_DESC] = "description",
+    [FIELD_CXN_REQUEST_QUERY_RESP_RECORD_COUNT] = "count",
+    [FIELD_CXN_REQUEST_QUERY_RESP_ARRAY_START] = JSON_C_ARRAY_START,
+    [FIELD_CXN_REQUEST_QUERY_RESP_UID] = "uid",
+    [FIELD_CXN_REQUEST_QUERY_RESP_FNAME] = "fname",
+    [FIELD_CXN_REQUEST_QUERY_RESP_LNAME] = "lname",
+    [FIELD_CXN_REQUEST_QUERY_RESP_AVATAR_URL] = "url",
+    [FIELD_CXN_REQUEST_QUERY_RESP_DATE] = "date",
+    [FIELD_CXN_REQUEST_QUERY_RESP_FLAG] = "flag",
+    [FIELD_CXN_REQUEST_QUERY_RESP_ARRAY_END] = JSON_C_ARRAY_END,
+};
+
+static const char *_table_cxn_channel_query_resp_fields[] = {
+    [FIELD_CXN_CHANNEL_QUERY_RESP_CODE] = "code",
+    [FIELD_CXN_CHANNEL_QUERY_RESP_DESC] = "description",
+    [FIELD_CXN_CHANNEL_QUERY_RESP_RECORD_COUNT] = "count",
+    [FIELD_CXN_CHANNEL_QUERY_RESP_ARRAY_START] = JSON_C_ARRAY_START,
+    [FIELD_CXN_CHANNEL_QUERY_RESP_UID] = "uid",
+    [FIELD_CXN_CHANNEL_QUERY_RESP_FNAME] = "fname",
+    [FIELD_CXN_CHANNEL_QUERY_RESP_LNAME] = "lname",
+    [FIELD_CXN_CHANNEL_QUERY_RESP_AVATAR_URL] = "url",
+    [FIELD_CXN_CHANNEL_QUERY_RESP_DATE] = "date",
+    [FIELD_CXN_CHANNEL_QUERY_RESP_CHANNEL_TYPE] = "channel",
+    [FIELD_CXN_CHANNEL_QUERY_RESP_ARRAY_END] = JSON_C_ARRAY_END,
+};
+
 #define table_field_at_index(tbl, findex)				\
     _table_##tbl##_fields[findex]
 
 #define for_each_table_findex(findex, tbl)				\
     for (findex = 0; findex < ARRAY_SIZE(_table_##tbl##_fields); findex++)
 
-#define json_parse_record_generator(name, tbl)				\
-    int gweb_json_parse_record_##name (struct json_object *jobj,	\
-				       j2c_msg_t *j2cmsg)		\
+#define json_parse_record_generator(tbl)				\
+    int gweb_json_parse_record_##tbl (struct json_object *jobj,         \
+                                      j2c_msg_t *j2cmsg)		\
     {									\
 	struct json_object *jfield;					\
 	struct j2c_##tbl##_msg *j2ctbl = &j2cmsg->tbl;			\
@@ -115,7 +179,7 @@ static const char *_table_avatar_resp_fields[] = {
 	    if (!json_object_object_get_ex(jobj,			\
  			 table_field_at_index(tbl##_msg, findex),       \
                          &jfield)) {                                    \
-		log_debug("<JSON-PARSE: (" #name ", " #tbl ")> "	\
+		log_debug("<JSON-PARSE: (" #tbl ")> "                   \
 			  "skipping field '%s' in message\n",		\
 			  table_field_at_index(tbl##_msg, findex));     \
 		j2ctbl->fields[findex] = NULL;				\
@@ -128,13 +192,13 @@ static const char *_table_avatar_resp_fields[] = {
 	return 1;							\
     }
 
-#define json_dump_record_generator(name, tbl)				\
+#define json_dump_record_generator(tbl)                                 \
     static void gweb_json_dump_##tbl (struct j2c_##tbl##_msg *j2ctbl)	\
     {									\
 	int findex;							\
 									\
 	for_each_table_findex(findex, tbl##_msg) {			\
-	    log_debug("<JSON-PARSE: (" #name ", " #tbl ")> %s => %s\n", \
+            log_debug("<JSON-PARSE: (" #tbl ")> %s => %s\n",            \
 		      table_field_at_index(tbl##_msg, findex),	        \
 		      j2ctbl->fields[findex]);				\
 	}								\
@@ -146,11 +210,69 @@ static const char *_table_avatar_resp_fields[] = {
  */
 #define MAX_RESPONSE_BYTES (2048)
 
-#define json_response_generator(name, tbl)                              \
+#define PUSH_BUF(fmt,...)                       \
+    len += sprintf(*response+len, fmt, ## __VA_ARGS__)
+
+#define json_dummy_array_response_generator(tbl)                        \
+    int gweb_json_gen_response_array_##tbl (j2c_resp_t *j2cresp,        \
+                                            void *table,                \
+                                            int array_idx,              \
+                                            int start_findex,           \
+                                            int buf_len,                \
+                                            char **response)            \
+    {                                                                   \
+        return buf_len;                                                 \
+    }
+
+#define json_array_response_generator(tbl)                              \
+    int gweb_json_gen_response_array_##tbl (j2c_resp_t *j2cresp,        \
+                                            void *table,                \
+                                            int array_idx,              \
+                                            int start_findex,           \
+                                            int buf_len,                \
+                                            char **response)            \
+    {                                                                   \
+        int len = buf_len, idx, tbl_idx;                                \
+        struct j2c_##tbl##_resp *j2ctbl = &j2cresp->tbl;                \
+                                                                        \
+        /* For now support one array set */                             \
+        struct j2c_##tbl##_resp_array1 *j2carr = j2ctbl->array1;        \
+        int nr_elem = j2ctbl->nr_array1_records;                        \
+                                                                        \
+        if (nr_elem < 0) {                                              \
+            return (len);                                               \
+        }                                                               \
+                                                                        \
+        PUSH_BUF("\"array%d\":[", array_idx);                           \
+        for (idx = 0; idx < nr_elem; idx++) {                           \
+            PUSH_BUF("{");                                              \
+            for (tbl_idx = start_findex+1; ; tbl_idx++) {               \
+                if (table_field_at_index(tbl##_resp, tbl_idx) ==        \
+                    JSON_C_ARRAY_END) {                                 \
+                    break;                                              \
+                }                                                       \
+                if (j2carr[idx].fields[tbl_idx-start_findex-1]) {       \
+                    PUSH_BUF("\"%s\":\"%s\",",                          \
+                             table_field_at_index(tbl##_resp, tbl_idx), \
+                             j2carr[idx].fields[tbl_idx-start_findex-1]); \
+                }                                                       \
+            }                                                           \
+            len--;                                                     \
+            PUSH_BUF("},");                                             \
+        }                                                               \
+        if (nr_elem) {                                                  \
+            len--;                                                      \
+        }                                                               \
+        (*response)[len++] = ']';                                       \
+        (*response)[len++] = '\0';                                      \
+        return (len);                                                   \
+    }
+
+#define json_response_generator(tbl)                                    \
     int gweb_json_gen_response_##tbl (j2c_resp_t *j2cresp,              \
                                       char **response)                  \
     {                                                                   \
-        int findex, len = 0;                                            \
+        int findex, array_count = 0, len = 0;                           \
         struct j2c_##tbl##_resp *j2ctbl = &j2cresp->tbl;                \
                                                                         \
         if (!response) {                                                \
@@ -162,13 +284,24 @@ static const char *_table_avatar_resp_fields[] = {
             return 1;                                                   \
         }                                                               \
                                                                         \
-        len += sprintf(*response+len, "{\"status\":{");	                \
-                                                                        \
+        PUSH_BUF("{\"status\":{");                                      \
         for_each_table_findex(findex, tbl##_resp) {                     \
+            if (table_field_at_index(tbl##_resp, findex) ==             \
+                JSON_C_ARRAY_START) {                                   \
+                array_count++;                                          \
+                if (array_count == 1) {                                 \
+                    len = gweb_json_gen_response_array_##tbl(j2cresp,   \
+                                    j2ctbl, array_count, findex,        \
+                                    len, response);                     \
+                }                                                       \
+                while (table_field_at_index(tbl##_resp, ++findex)       \
+                       != JSON_C_ARRAY_END);                            \
+                continue;                                               \
+            }                                                           \
             if (j2ctbl->fields[findex]) {                               \
-                len += sprintf(*response+len, "\"%s\":\"%s\",",         \
-                          table_field_at_index(tbl##_resp, findex),     \
-                          j2ctbl->fields[findex]);                      \
+                PUSH_BUF("\"%s\":\"%s\",",                              \
+                         table_field_at_index(tbl##_resp, findex),      \
+                         j2ctbl->fields[findex]);                       \
             }                                                           \
         }                                                               \
                                                                         \
@@ -181,54 +314,122 @@ static const char *_table_avatar_resp_fields[] = {
     }
 
 /* Registration */
-json_dump_record_generator(registration, registration)
-json_parse_record_generator(registration, registration)
-json_response_generator(registration, registration)
+json_dump_record_generator(registration)
+json_parse_record_generator(registration)
+json_dummy_array_response_generator(registration)
+json_response_generator(registration)
 
 /* Profile */
-json_dump_record_generator(profile, profile)
-json_parse_record_generator(profile, profile)
-json_response_generator(profile, profile)
+json_dump_record_generator(profile)
+json_parse_record_generator(profile)
+json_dummy_array_response_generator(profile)
+json_response_generator(profile)
 
 /* Login */
-json_dump_record_generator(login, login)
-json_parse_record_generator(login, login)
-json_response_generator(login, login)
+json_dump_record_generator(login)
+json_parse_record_generator(login)
+json_dummy_array_response_generator(login)
+json_response_generator(login)
 
 /* Avatar */
-json_dump_record_generator(avatar, avatar)
-json_parse_record_generator(avatar, avatar)
-json_response_generator(avatar, avatar)
+json_dump_record_generator(avatar)
+json_parse_record_generator(avatar)
+json_dummy_array_response_generator(avatar)
+json_response_generator(avatar)
+
+/* Connect request */
+json_dump_record_generator(cxn_request)
+json_parse_record_generator(cxn_request)
+json_dummy_array_response_generator(cxn_request)
+json_response_generator(cxn_request)
+
+json_dump_record_generator(cxn_request_query)
+json_parse_record_generator(cxn_request_query)
+json_array_response_generator(cxn_request_query)
+json_response_generator(cxn_request_query)
+
+/* Connect channel */
+json_dump_record_generator(cxn_channel)
+json_parse_record_generator(cxn_channel)
+json_dummy_array_response_generator(cxn_channel)
+json_response_generator(cxn_channel)
+
+json_dump_record_generator(cxn_channel_query)
+json_parse_record_generator(cxn_channel_query)
+json_array_response_generator(cxn_channel_query)
+json_response_generator(cxn_channel_query)
+
+#define JSON_PARSE_FN(tbl)     gweb_json_parse_record_##tbl
+#define JSON_RESP_FN(tbl)      gweb_json_gen_response_##tbl
+
+#define API_RECORD_ENTRY(idx, name, j_parse, j_resp, db_handler, db_free) \
+    [idx] = {                                                           \
+        .api_name          = name,                                      \
+        .api_handler       = j_parse,                                   \
+        .api_resp_handler  = j_resp,                                    \
+        .api_db_handler    = db_handler,                                \
+        .api_db_resp_free  = db_free,                                   \
+    }
 
 struct json_map_info _j2c_map_info[] = {
-    [JSON_C_REGISTRATION_MSG] = {
-        .api_name         = "registration",
-        .api_handler      = gweb_json_parse_record_registration,
-        .api_resp_handler = gweb_json_gen_response_registration,
-        .api_db_handler   = gweb_mysql_handle_registration,
-        .api_db_resp_free = gweb_mysql_free_registration,
-    },
-    [JSON_C_PROFILE_MSG] = {
-        .api_name         = "update_profile",
-        .api_handler      = gweb_json_parse_record_profile,
-        .api_resp_handler = gweb_json_gen_response_profile,
-        .api_db_handler   = gweb_mysql_handle_profile,
-        .api_db_resp_free = gweb_mysql_free_profile,
-    },
-    [JSON_C_LOGIN_MSG] = {
-        .api_name         = "login",
-        .api_handler      = gweb_json_parse_record_login,
-        .api_resp_handler = gweb_json_gen_response_login,
-        .api_db_handler   = gweb_mysql_handle_login,
-        .api_db_resp_free = gweb_mysql_free_login,
-    },
-    [JSON_C_AVATAR_MSG] = {
-        .api_name         = "update_avatar",
-        .api_handler      = gweb_json_parse_record_avatar,
-        .api_resp_handler = gweb_json_gen_response_avatar,
-        .api_db_handler   = gweb_mysql_handle_avatar,
-        .api_db_resp_free = gweb_mysql_free_avatar,
-    },
+    API_RECORD_ENTRY(JSON_C_REGISTRATION_MSG,
+                     "registration",
+                     JSON_PARSE_FN(registration),
+                     JSON_RESP_FN(registration),
+                     gweb_mysql_handle_registration,
+                     gweb_mysql_free_registration),
+
+    API_RECORD_ENTRY(JSON_C_PROFILE_MSG,
+                     "update_profile",
+                     JSON_PARSE_FN(profile),
+                     JSON_RESP_FN(profile),
+                     gweb_mysql_handle_profile,
+                     gweb_mysql_free_profile),
+
+    API_RECORD_ENTRY(JSON_C_LOGIN_MSG,
+                     "login",
+                     JSON_PARSE_FN(login),
+                     JSON_RESP_FN(login),
+                     gweb_mysql_handle_login,
+                     gweb_mysql_free_login),
+
+    API_RECORD_ENTRY(JSON_C_AVATAR_MSG,
+                     "update_avatar",
+                     JSON_PARSE_FN(avatar),
+                     JSON_RESP_FN(avatar),
+                     gweb_mysql_handle_avatar,
+                     gweb_mysql_free_avatar),
+
+    API_RECORD_ENTRY(JSON_C_CXN_REQUEST_MSG,
+                     "cxn_request",
+                     JSON_PARSE_FN(cxn_request),
+                     JSON_RESP_FN(cxn_request),
+                     gweb_mysql_handle_cxn_request,
+                     gweb_mysql_free_cxn_request),
+
+    API_RECORD_ENTRY(JSON_C_CXN_CHANNEL_MSG,
+                     "cxn_channel",
+                     JSON_PARSE_FN(cxn_channel),
+                     JSON_RESP_FN(cxn_channel),
+                     gweb_mysql_handle_cxn_channel,
+                     gweb_mysql_free_cxn_channel),
+
+    /* GET APIs, does not require PARSE for JSON, retained till JSON
+     * handling is cleaned up.
+     */
+    API_RECORD_ENTRY(JSON_C_CXN_REQUEST_QUERY_MSG,
+                     "cxn_request_query",
+                     JSON_PARSE_FN(cxn_request_query),
+                     JSON_RESP_FN(cxn_request_query),
+                     gweb_mysql_handle_cxn_request_query,
+                     gweb_mysql_free_cxn_request_query),
+
+    API_RECORD_ENTRY(JSON_C_CXN_CHANNEL_QUERY_MSG,
+                     "cxn_channel_query",
+                     JSON_PARSE_FN(cxn_channel_query),
+                     JSON_RESP_FN(cxn_channel_query),
+                     gweb_mysql_handle_cxn_channel_query,
+                     gweb_mysql_free_cxn_channel_query),
 };
 
 /*
@@ -279,7 +480,9 @@ gweb_json_post_processor (const char *data, size_t size, char **response, int *s
                     ret = (*j2cinfo->api_resp_handler)(j2cresp, response);
                 }
 
-                /* Free reponse structure from DB layer */
+                /* Free response structure from DB layer, call free
+                 * even if the above response handler had failed.
+                 */
                 if (j2cinfo->api_db_resp_free) {
                     (*j2cinfo->api_db_resp_free)(j2cresp);
                 }
@@ -295,4 +498,54 @@ gweb_json_post_processor (const char *data, size_t size, char **response, int *s
         }
     }
    return ret;
+}
+
+int
+gweb_json_get_processor (void *connection, const char *url,
+                         char **response, int *status)
+{
+    char json_get_buf[256], *buf;
+    const char *val, *fld;
+    int len = 0, idx;
+
+    /* TBD: Move this translation to json parser */
+    if (strcmp(url, "/query/cxn_request") == 0) {
+        buf = json_get_buf;
+        len += sprintf(buf+len, "{\"cxn_request_query\":{");
+
+        for_each_table_findex(idx, cxn_request_query_msg) {
+            fld = table_field_at_index(cxn_request_query_msg, idx);
+            val = MHD_lookup_connection_value(connection,
+                                              MHD_GET_ARGUMENT_KIND, fld);
+            if (val) {
+                len += sprintf(buf+len, "\"%s\":\"%s\",", fld, val);
+            }
+        }
+        buf[len-1] = '}';
+        buf[len++] = '}';
+        buf[len] = '\0';
+
+        return gweb_json_post_processor((const char *)buf, len, response, status);
+
+    } else if (strcmp(url, "/query/cxn_channel") == 0) {
+        buf = json_get_buf;
+        len += sprintf(buf+len, "{\"cxn_channel_query\":{");
+
+        for_each_table_findex(idx, cxn_channel_query_msg) {
+            fld = table_field_at_index(cxn_channel_query_msg, idx);
+            val = MHD_lookup_connection_value(connection,
+                                              MHD_GET_ARGUMENT_KIND,
+                                              fld);
+            if (val) {
+                len += sprintf(buf+len, "\"%s\":\"%s\",", fld, val);
+            }
+        }
+        buf[len-1] = '}';
+        buf[len++] = '}';
+        buf[len] = '\0';
+
+        return gweb_json_post_processor((const char *)buf, len, response, status);
+    }
+
+    return MHD_YES;
 }

@@ -28,4 +28,7 @@ extern int gweb_json_gen_response_profile (j2c_resp_t *j2cresp,
 extern int gweb_json_post_processor (const char *data, size_t size,
                                      char **response, int *status);
 
+extern int gweb_json_get_processor (void *connection, const char *url,
+                                    char **response, int *status);
+
 #endif // JSON_API_H
