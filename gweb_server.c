@@ -34,6 +34,7 @@ enum {
 struct http_cxn_info {
     int cxn_type;
     char *json_response;
+    const char *url;
     int status_code;
     struct MHD_Connection *connection;
     struct MHD_Response *response;
@@ -119,9 +120,18 @@ json_post_handler (void *coninfo_cls, enum MHD_ValueKind kind, const char *key,
     char *response = NULL;
     int status;
 
-    if (gweb_json_post_processor(data, size, &response, &status)) {
-	log_error("JSON post processor failed to handle API\n");
-	return MHD_NO;
+    if (httpcxn->cxn_type == HTTP_REQ_POST) {
+        if (gweb_json_post_processor(data, size, &response, &status)) {
+            log_error("JSON post processor failed to handle API\n");
+            return MHD_NO;
+        }
+
+    } else if (httpcxn->cxn_type == HTTP_REQ_GET) {
+        if (gweb_json_get_processor(httpcxn->connection, httpcxn->url,
+                                    &response, &status)) {
+            log_error("JSON get processor failed to handle API\n");
+            return MHD_NO;
+        }
     }
 
     if (response != NULL) {
@@ -152,7 +162,7 @@ static int mhd_connection_handler (void *cls,
     struct http_cxn_info *httpcxn = *con_cls;
     struct http_cxn_info default_httpcxn;
 
-    int has_json = 0;
+    int has_json = 0, is_get = 0;
 
     log_debug("URL = <%s>\n", url);
     log_debug("METHOD = <%s>\n", method);
@@ -160,45 +170,62 @@ static int mhd_connection_handler (void *cls,
     log_debug("UPLOAD_DATA = <%s>\n SIZE = %zd\n",
 	   upload_data, *upload_data_size);
 
-    if (httpcxn && httpcxn->pp != NULL) {
-	if (*upload_data_size == 0) {
-	    mhd_send_page(httpcxn);
-	} else {
-	    log_debug("UPLOAD DATA:\n<%s>\n DATA-SIZE: %zd\n", upload_data,
-		   *upload_data_size);
-	    MHD_post_process(httpcxn->pp, upload_data, *upload_data_size);
-	    *upload_data_size = 0;
-	}
+    if (httpcxn) {
+        if (httpcxn->cxn_type == HTTP_REQ_POST && httpcxn->pp != NULL) {
+            if (*upload_data_size == 0) {
+                mhd_send_page(httpcxn);
+            } else {
+                log_debug("UPLOAD DATA:\n<%s>\n DATA-SIZE: %zd\n", upload_data,
+                          *upload_data_size);
+                MHD_post_process(httpcxn->pp, upload_data, *upload_data_size);
+                *upload_data_size = 0;
+            }
+        } else if (httpcxn->cxn_type == HTTP_REQ_GET) {
+            json_post_handler(httpcxn, 0, NULL, NULL, NULL, NULL, NULL, 0, 0);
+            mhd_send_page(httpcxn);
+        }
 	return MHD_YES;
     } else {
-	MHD_get_connection_values(connection, MHD_HEADER_KIND, &check_json_content, &has_json);
-	if (has_json) {
-	    log_debug("FOUND JSON content!\n");
+	MHD_get_connection_values(connection, MHD_HEADER_KIND,
+                                  &check_json_content, &has_json);
+        if (has_json) {
+            if (strcmp(method, "POST") != 0) {
+                /* Cannot handle JSON in methods other than POST */
+                log_error("JSON handling is support only in POST (method=%s)\n",
+                          method);
+                goto __send_error_info;
+            }
+            log_debug("FOUND JSON content!\n");
 
-	    if ((httpcxn = calloc(1, sizeof(struct http_cxn_info))) == NULL) {
-		log_error("unable to allocate memory!\n");
-		goto __send_error_info;
-	    }
+        } else if (strcmp(method, "GET") == 0) {
+            is_get = 1;
 
-	    httpcxn->connection = connection;
+        } else {
+            log_error("Invalid message (neither POST-JSON nor GET)\n");
+            goto __send_error_info;
+        }
 
-	    if (strcmp(method, "POST") == 0) {
-		httpcxn->cxn_type = HTTP_REQ_POST;
-	    } else {
-		httpcxn->cxn_type = HTTP_REQ_GET;
-	    }
+        if ((httpcxn = calloc(1, sizeof(struct http_cxn_info))) == NULL) {
+            log_error("unable to allocate memory!\n");
+            goto __send_error_info;
+        }
 
-	    httpcxn->pp = MHD_create_post_processor(connection, GWEB_POST_BUFSZ,
-						    &json_post_handler, httpcxn);
-	    if (httpcxn->pp == NULL) {
-		log_debug("%s: creating post processor failed!!!\n", __func__);
-		free(httpcxn);
-		goto __send_error_info;
-	    }
+        httpcxn->connection = connection;
+        httpcxn->cxn_type = (is_get) ? HTTP_REQ_GET: HTTP_REQ_POST;
 
-	    *con_cls = httpcxn;
-	    return MHD_YES;
-	}
+        if (httpcxn->cxn_type == HTTP_REQ_POST) {
+            httpcxn->pp = MHD_create_post_processor(connection, GWEB_POST_BUFSZ,
+                                                    &json_post_handler, httpcxn);
+            if (httpcxn->pp == NULL) {
+                log_debug("%s: creating post processor failed!!!\n", __func__);
+                free(httpcxn);
+                goto __send_error_info;
+            }
+        } else {
+            httpcxn->url = url;
+        }
+        *con_cls = httpcxn;
+        return MHD_YES;
     }
 
 __send_error_info:
