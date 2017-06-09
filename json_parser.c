@@ -65,13 +65,13 @@ static const char *_table_avatar_msg_fields[] = {
 };
 
 static const char *_table_cxn_channel_msg_fields[] = {
-    [FIELD_CXN_CHANNEL_UID] = "id",
+    [FIELD_CXN_CHANNEL_UID] = "from",
     [FIELD_CXN_CHANNEL_TO_UID] = "to",
     [FIELD_CXN_CHANNEL_TYPE] = "channel",
 };
 
 static const char *_table_cxn_request_msg_fields[] = {
-    [FIELD_CXN_REQUEST_UID] = "id",
+    [FIELD_CXN_REQUEST_UID] = "from",
     [FIELD_CXN_REQUEST_TO_UID] = "to",
     [FIELD_CXN_REQUEST_FLAG] = "flag",
 };
@@ -86,6 +86,10 @@ static const char *_table_cxn_channel_query_msg_fields[] = {
     [FIELD_CXN_CHANNEL_QUERY_FROM_UID] = "from",
     [FIELD_CXN_CHANNEL_QUERY_TO_UID] = "to",
     [FIELD_CXN_CHANNEL_QUERY_TYPE] = "channel",
+};
+
+static const char *_table_uid_query_msg_fields[] = {
+    [FIELD_UID_QUERY_EMAIL] = "email",
 };
 
 static const char *_table_registration_resp_fields[] = {
@@ -138,7 +142,7 @@ static const char *_table_cxn_request_query_resp_fields[] = {
     [FIELD_CXN_REQUEST_QUERY_RESP_DESC] = "description",
     [FIELD_CXN_REQUEST_QUERY_RESP_RECORD_COUNT] = "count",
     [FIELD_CXN_REQUEST_QUERY_RESP_ARRAY_START] = JSON_C_ARRAY_START,
-    [FIELD_CXN_REQUEST_QUERY_RESP_UID] = "uid",
+    [FIELD_CXN_REQUEST_QUERY_RESP_UID] = "id",
     [FIELD_CXN_REQUEST_QUERY_RESP_FNAME] = "fname",
     [FIELD_CXN_REQUEST_QUERY_RESP_LNAME] = "lname",
     [FIELD_CXN_REQUEST_QUERY_RESP_AVATAR_URL] = "url",
@@ -152,13 +156,19 @@ static const char *_table_cxn_channel_query_resp_fields[] = {
     [FIELD_CXN_CHANNEL_QUERY_RESP_DESC] = "description",
     [FIELD_CXN_CHANNEL_QUERY_RESP_RECORD_COUNT] = "count",
     [FIELD_CXN_CHANNEL_QUERY_RESP_ARRAY_START] = JSON_C_ARRAY_START,
-    [FIELD_CXN_CHANNEL_QUERY_RESP_UID] = "uid",
+    [FIELD_CXN_CHANNEL_QUERY_RESP_UID] = "id",
     [FIELD_CXN_CHANNEL_QUERY_RESP_FNAME] = "fname",
     [FIELD_CXN_CHANNEL_QUERY_RESP_LNAME] = "lname",
     [FIELD_CXN_CHANNEL_QUERY_RESP_AVATAR_URL] = "url",
     [FIELD_CXN_CHANNEL_QUERY_RESP_DATE] = "date",
     [FIELD_CXN_CHANNEL_QUERY_RESP_CHANNEL_TYPE] = "channel",
     [FIELD_CXN_CHANNEL_QUERY_RESP_ARRAY_END] = JSON_C_ARRAY_END,
+};
+
+static const char *_table_uid_query_resp_fields[] = {
+    [FIELD_UID_QUERY_RESP_CODE] = "code",
+    [FIELD_UID_QUERY_RESP_DESC] = "description",
+    [FIELD_UID_QUERY_RESP_UID] = "id",
 };
 
 #define table_field_at_index(tbl, findex)				\
@@ -359,6 +369,11 @@ json_parse_record_generator(cxn_channel_query)
 json_array_response_generator(cxn_channel_query)
 json_response_generator(cxn_channel_query)
 
+json_dump_record_generator(uid_query)
+json_parse_record_generator(uid_query)
+json_dummy_array_response_generator(uid_query)
+json_response_generator(uid_query)
+
 #define JSON_PARSE_FN(tbl)     gweb_json_parse_record_##tbl
 #define JSON_RESP_FN(tbl)      gweb_json_gen_response_##tbl
 
@@ -430,6 +445,13 @@ struct json_map_info _j2c_map_info[] = {
                      JSON_RESP_FN(cxn_channel_query),
                      gweb_mysql_handle_cxn_channel_query,
                      gweb_mysql_free_cxn_channel_query),
+
+    API_RECORD_ENTRY(JSON_C_UID_QUERY_MSG,
+                     "uid_query",
+                     JSON_PARSE_FN(uid_query),
+                     JSON_RESP_FN(uid_query),
+                     gweb_mysql_handle_uid_query,
+                     gweb_mysql_free_uid_query),
 };
 
 /*
@@ -500,51 +522,53 @@ gweb_json_post_processor (const char *data, size_t size, char **response, int *s
    return ret;
 }
 
+#define parse_get_to_json_tokens(conn, tbl, buf, len)       \
+    do {                                                    \
+        char *p_buf;                                        \
+        const char *val, *fld;                              \
+        int idx;                                            \
+                                                            \
+        p_buf = buf;                                        \
+        len += sprintf(p_buf+len, "{\"" #tbl "\":{");       \
+        for_each_table_findex(idx, tbl##_msg) {             \
+            fld = table_field_at_index(tbl##_msg, idx);     \
+            val = MHD_lookup_connection_value(conn,         \
+                             MHD_GET_ARGUMENT_KIND, fld);   \
+            if (val) {                                      \
+                len += sprintf(p_buf+len, "\"%s\":\"%s\",", \
+                               fld, val);                   \
+            }                                               \
+        }                                                   \
+        buf[len-1] = '}';                                   \
+        buf[len++] = '}';                                   \
+        buf[len] = '\0';                                    \
+    } while (0)
+
 int
 gweb_json_get_processor (void *connection, const char *url,
                          char **response, int *status)
 {
-    char json_get_buf[256], *buf;
-    const char *val, *fld;
-    int len = 0, idx;
+    char json_get_buf[256];
+    int len = 0, is_valid_qry = 1;
 
-    /* TBD: Move this translation to json parser */
     if (strcmp(url, "/query/cxn_request") == 0) {
-        buf = json_get_buf;
-        len += sprintf(buf+len, "{\"cxn_request_query\":{");
-
-        for_each_table_findex(idx, cxn_request_query_msg) {
-            fld = table_field_at_index(cxn_request_query_msg, idx);
-            val = MHD_lookup_connection_value(connection,
-                                              MHD_GET_ARGUMENT_KIND, fld);
-            if (val) {
-                len += sprintf(buf+len, "\"%s\":\"%s\",", fld, val);
-            }
-        }
-        buf[len-1] = '}';
-        buf[len++] = '}';
-        buf[len] = '\0';
-
-        return gweb_json_post_processor((const char *)buf, len, response, status);
+        parse_get_to_json_tokens(connection, cxn_request_query,
+                                 json_get_buf, len);
 
     } else if (strcmp(url, "/query/cxn_channel") == 0) {
-        buf = json_get_buf;
-        len += sprintf(buf+len, "{\"cxn_channel_query\":{");
+        parse_get_to_json_tokens(connection, cxn_channel_query,
+                                 json_get_buf, len);
 
-        for_each_table_findex(idx, cxn_channel_query_msg) {
-            fld = table_field_at_index(cxn_channel_query_msg, idx);
-            val = MHD_lookup_connection_value(connection,
-                                              MHD_GET_ARGUMENT_KIND,
-                                              fld);
-            if (val) {
-                len += sprintf(buf+len, "\"%s\":\"%s\",", fld, val);
-            }
-        }
-        buf[len-1] = '}';
-        buf[len++] = '}';
-        buf[len] = '\0';
+    } else if (strcmp(url, "/query/uid") == 0) {
+        parse_get_to_json_tokens(connection, uid_query, json_get_buf, len);
 
-        return gweb_json_post_processor((const char *)buf, len, response, status);
+    } else {
+        is_valid_qry = 0;
+    }
+
+    if (is_valid_qry) {
+        return gweb_json_post_processor((const char *)json_get_buf, len,
+                                        response, status);
     }
 
     return MHD_YES;
