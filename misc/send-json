@@ -16,12 +16,33 @@ echo "SENDING TO: ${TO_HOST}"
 
 uID=""
 
+function send_get_query() {
+    local qry="$1"
+
+    echo "SEND: ${qry}"
+    resp=$(curl -X GET http://${TO_HOST}${qry} 2>/dev/null)
+    echo "RECV: ${resp}"
+}
+
 function send_json() {
     local jmsg="$1"
 
     echo "SEND: ${jmsg}"
     resp=$(curl -H "Content-Type: application/json" -X POST -d ${jmsg} http://${TO_HOST} 2>/dev/null)
     echo "RECV: ${resp}"
+}
+
+function send_get_query_set_uid() {
+    local qry="$1"
+
+    echo "SEND: ${qry}"
+    resp=$(curl -X GET http://${TO_HOST}${qry} 2>/dev/null)
+    echo "RECV: ${resp}"
+
+    echo ${resp} | grep "200" > /dev/null
+    if [ $? -eq 0 ]; then
+        uID=$(echo ${resp} | grep -o "id\":\".*\"" | cut -f2 -d: | cut -f2 -d'"')
+    fi
 }
 
 function send_json_set_uid() {
@@ -79,4 +100,73 @@ send_json '{"update_profile":{"id":"'${uID}'","add1":"elsewhere-1","add2":"","co
 echo -e "\n---- LOGIN (correct password) ----"
 send_json '{"login":{"email":"mimi@moe.com","password":"AA13!!227798Ajhb"}}'
 
-echo -e "\n"
+echo -e "\n---- REGISTRATION (5 users) ----"
+send_json '{"registration":{"fname":"user1","lname":"last1","email":"u11@test.com","phone":"1123456789","password":"TestPassword"}}'
+send_json '{"registration":{"fname":"user2","lname":"last2","email":"u22@test.com","phone":"1223456789","password":"TestPassword"}}'
+send_json '{"registration":{"fname":"user3","lname":"last3","email":"u33@test.com","phone":"1323456789","password":"TestPassword"}}'
+send_json '{"registration":{"fname":"user4","lname":"last4","email":"u44@test.com","phone":"1423456789","password":"TestPassword"}}'
+send_json '{"registration":{"fname":"user5","lname":"last5","email":"u55@test.com","phone":"1523456789","password":"TestPassword"}}'
+
+echo -e "\n---- GET UIDs (5 users) ----"
+send_get_query_set_uid '/query/uid?email=u11@test.com'
+u11_uid=${uID}
+send_get_query_set_uid '/query/uid?email=u22@test.com'
+u22_uid=${uID}
+send_get_query_set_uid '/query/uid?email=u33@test.com'
+u33_uid=${uID}
+send_get_query_set_uid '/query/uid?email=u44@test.com'
+u44_uid=${uID}
+send_get_query_set_uid '/query/uid?email=u55@test.com'
+u55_uid=${uID}
+
+echo -e "\n---- AVATAR UPDATE (1,2,5) ----"
+send_json '{"update_avatar":{"id":"'${u11_uid}'","url":"http://amazon-s3-url012345.com/user0111.jpg"}}'
+send_json '{"update_avatar":{"id":"'${u22_uid}'","url":"http://amazon-s3-url012345.com/user0222.jpg"}}'
+send_json '{"update_avatar":{"id":"'${u55_uid}'","url":"http://amazon-s3-url012345.com/user0555.jpg"}}'
+
+echo -e "\n---- SEND REQUESTS (1->2,3,5(closed), 2->1,3(closed),4, 3->5) ---"
+send_json '{"cxn_request":{"from":"'${u11_uid}'","to":"'${u22_uid}'","flag":"open"}}'
+send_json '{"cxn_request":{"from":"'${u11_uid}'","to":"'${u33_uid}'","flag":"open"}}'
+send_json '{"cxn_request":{"from":"'${u11_uid}'","to":"'${u55_uid}'","flag":"closed"}}'
+send_json '{"cxn_request":{"from":"'${u22_uid}'","to":"'${u11_uid}'","flag":"open"}}'
+send_json '{"cxn_request":{"from":"'${u22_uid}'","to":"'${u33_uid}'","flag":"closed"}}'
+send_json '{"cxn_request":{"from":"'${u22_uid}'","to":"'${u44_uid}'","flag":"open"}}'
+send_json '{"cxn_request":{"from":"'${u33_uid}'","to":"'${u55_uid}'","flag":"open"}}'
+
+echo -e "\n---- SEND REQUESTS (UNK->1, 2->UNK, UNK0->UNK1) ---"
+send_json '{"cxn_request":{"from":"UNK","to":"'${u11_uid}'","flag":"open"}}'
+send_json '{"cxn_request":{"from":"'${u22_uid}'","to":"UNK","flag":"open"}}'
+send_json '{"cxn_request":{"from":"UNK0","to":"UNK1","flag":"open"}}'
+
+echo -e "\n---- CONNECT CHANNELS (1->2,3, 2->1,4, 3->5, 5->4) ---"
+send_json '{"cxn_channel":{"from":"'${u11_uid}'","to":"'${u22_uid}'","channel":"facebook"}}'
+send_json '{"cxn_channel":{"from":"'${u11_uid}'","to":"'${u33_uid}'","channel":"facebook"}}'
+send_json '{"cxn_channel":{"from":"'${u11_uid}'","to":"'${u33_uid}'","channel":"e-mail"}}'
+send_json '{"cxn_channel":{"from":"'${u22_uid}'","to":"'${u11_uid}'","channel":"phone"}}'
+send_json '{"cxn_channel":{"from":"'${u22_uid}'","to":"'${u44_uid}'","channel":"address"}}'
+send_json '{"cxn_channel":{"from":"'${u33_uid}'","to":"'${u55_uid}'","channel":"twitter"}}'
+send_json '{"cxn_channel":{"from":"'${u55_uid}'","to":"'${u44_uid}'","channel":"address"}}'
+send_json '{"cxn_channel":{"from":"'${u55_uid}'","to":"'${u44_uid}'","channel":"e-mail"}}'
+
+echo -e "\n---- CONNECT CHANNELS (UNK->1, 2->UNK, UNK0->UNK1, 4->3 (NO-CHANNEL)) ---"
+send_json '{"cxn_channel":{"from":"UNK","to":"'${u11_uid}'","channel":"facebook"}}'
+send_json '{"cxn_channel":{"from":"'${u22_uid}'","to":"UNK","channel":"facebook"}}'
+send_json '{"cxn_channel":{"from":"UNK0","to":"UNK1","channel":"facebook"}}'
+send_json '{"cxn_channel":{"from":"'${u44_uid}'","to":"'${u33_uid}'"}}'
+
+echo -e "\n---- QUERY REQUEST FROM(1,2,4,UNKNOWN) AND TO(3,5,UNKNOWN) THAT ARE OPEN ---"
+
+send_get_query '/query/cxn_request?from='${u11_uid}'&flag=open'
+send_get_query '/query/cxn_request?from='${u22_uid}'&flag=open'
+send_get_query '/query/cxn_request?from='${u44_uid}'&flag=open'
+send_get_query '/query/cxn_request?from=UNKNOWN&flag=open'
+send_get_query '/query/cxn_request?to='${u33_uid}'&flag=open'
+send_get_query '/query/cxn_request?to='${u55_uid}'&flag=open'
+send_get_query '/query/cxn_request?to=UNKNOWN&flag=open'
+
+echo -e "\n---- QUERY CHANNELS FROM(2,UNKNOWN) AND TO(4,UNKNOWN)-ON-ADDRESS ---"
+
+send_get_query '/query/cxn_channel?from='${u22_uid}
+send_get_query '/query/cxn_channel?from=UNKNOWN'
+send_get_query '/query/cxn_channel?to='${u44_uid}'&channel=address'
+send_get_query '/query/cxn_channel?to=UNKNOWN&channel=address'
