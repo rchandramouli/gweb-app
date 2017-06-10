@@ -92,6 +92,10 @@ static const char *_table_uid_query_msg_fields[] = {
     [FIELD_UID_QUERY_EMAIL] = "email",
 };
 
+static const char *_table_profile_query_msg_fields[] = {
+    [FIELD_PROFILE_QUERY_UID] = "id",
+};
+
 static const char *_table_registration_resp_fields[] = {
     [FIELD_REGISTRATION_RESP_CODE] = "code",
     [FIELD_REGISTRATION_RESP_DESC] = "description",
@@ -103,23 +107,23 @@ static const char *_table_profile_resp_fields[] = {
     [FIELD_PROFILE_RESP_DESC] = "description",
 };
 
-static const char *_table_login_resp_fields[] = {
-    [FIELD_LOGIN_RESP_CODE] = "code",
-    [FIELD_LOGIN_RESP_DESC] = "description",
-    [FIELD_LOGIN_RESP_UID] = "id",
-    [FIELD_LOGIN_RESP_FNAME] = "fname",
-    [FIELD_LOGIN_RESP_LNAME] = "lname",
-    [FIELD_LOGIN_RESP_EMAIL] = "email",
-    [FIELD_LOGIN_RESP_PHONE] = "phone",
-    [FIELD_LOGIN_RESP_ADDRESS1] = "add1",
-    [FIELD_LOGIN_RESP_ADDRESS2] = "add2",
-    [FIELD_LOGIN_RESP_ADDRESS3] = "add3",
-    [FIELD_LOGIN_RESP_COUNTRY] = "country",
-    [FIELD_LOGIN_RESP_STATE] = "state",
-    [FIELD_LOGIN_RESP_PINCODE] = "pincode",
-    [FIELD_LOGIN_RESP_FACEBOOK_HANDLE] = "facebook_h",
-    [FIELD_LOGIN_RESP_TWITTER_HANDLE] = "twitter_h",
-    [FIELD_LOGIN_RESP_AVATAR_URL] = "url",
+static const char *_table_profile_info_resp_fields[] = {
+    [FIELD_PROFILE_INFO_RESP_CODE] = "code",
+    [FIELD_PROFILE_INFO_RESP_DESC] = "description",
+    [FIELD_PROFILE_INFO_RESP_UID] = "id",
+    [FIELD_PROFILE_INFO_RESP_FNAME] = "fname",
+    [FIELD_PROFILE_INFO_RESP_LNAME] = "lname",
+    [FIELD_PROFILE_INFO_RESP_EMAIL] = "email",
+    [FIELD_PROFILE_INFO_RESP_PHONE] = "phone",
+    [FIELD_PROFILE_INFO_RESP_ADDRESS1] = "add1",
+    [FIELD_PROFILE_INFO_RESP_ADDRESS2] = "add2",
+    [FIELD_PROFILE_INFO_RESP_ADDRESS3] = "add3",
+    [FIELD_PROFILE_INFO_RESP_COUNTRY] = "country",
+    [FIELD_PROFILE_INFO_RESP_STATE] = "state",
+    [FIELD_PROFILE_INFO_RESP_PINCODE] = "pincode",
+    [FIELD_PROFILE_INFO_RESP_FACEBOOK_HANDLE] = "facebook_h",
+    [FIELD_PROFILE_INFO_RESP_TWITTER_HANDLE] = "twitter_h",
+    [FIELD_PROFILE_INFO_RESP_AVATAR_URL] = "url",
 };
 
 static const char *_table_avatar_resp_fields[] = {
@@ -339,7 +343,6 @@ json_response_generator(profile)
 json_dump_record_generator(login)
 json_parse_record_generator(login)
 json_dummy_array_response_generator(login)
-json_response_generator(login)
 
 /* Avatar */
 json_dump_record_generator(avatar)
@@ -374,6 +377,13 @@ json_parse_record_generator(uid_query)
 json_dummy_array_response_generator(uid_query)
 json_response_generator(uid_query)
 
+json_dump_record_generator(profile_query)
+json_parse_record_generator(profile_query)
+json_dummy_array_response_generator(profile_query)
+
+json_dummy_array_response_generator(profile_info)
+json_response_generator(profile_info)
+
 #define JSON_PARSE_FN(tbl)     gweb_json_parse_record_##tbl
 #define JSON_RESP_FN(tbl)      gweb_json_gen_response_##tbl
 
@@ -404,7 +414,7 @@ struct json_map_info _j2c_map_info[] = {
     API_RECORD_ENTRY(JSON_C_LOGIN_MSG,
                      "login",
                      JSON_PARSE_FN(login),
-                     JSON_RESP_FN(login),
+                     JSON_RESP_FN(profile_info),
                      gweb_mysql_handle_login,
                      gweb_mysql_free_login),
 
@@ -452,6 +462,13 @@ struct json_map_info _j2c_map_info[] = {
                      JSON_RESP_FN(uid_query),
                      gweb_mysql_handle_uid_query,
                      gweb_mysql_free_uid_query),
+
+    API_RECORD_ENTRY(JSON_C_PROFILE_QUERY_MSG,
+                     "profile_query",
+                     JSON_PARSE_FN(profile_query),
+                     JSON_RESP_FN(profile_info),
+                     gweb_mysql_handle_profile_query,
+                     gweb_mysql_free_profile_query),
 };
 
 /*
@@ -562,6 +579,10 @@ gweb_json_get_processor (void *connection, const char *url,
     } else if (strcmp(url, "/query/uid") == 0) {
         parse_get_to_json_tokens(connection, uid_query, json_get_buf, len);
 
+    } else if (strcmp(url, "/query/profile") == 0) {
+        parse_get_to_json_tokens(connection, profile_query, json_get_buf, len);
+
+        log_debug("%s: query string - %s\n", __func__, json_get_buf);
     } else {
         is_valid_qry = 0;
     }

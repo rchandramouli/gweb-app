@@ -148,8 +148,8 @@ gweb_mysql_update_response (int resp_type, int mysql_code,
         generate_default_response(profile, PROFILE, mysql_code);
         break;
 
-    case JSON_C_LOGIN_RESP:
-        generate_default_response(login, LOGIN, mysql_code);
+    case JSON_C_PROFILE_INFO_RESP:
+      generate_default_response(profile_info, PROFILE_INFO, mysql_code);
         break;
 
     case JSON_C_AVATAR_RESP:
@@ -352,43 +352,53 @@ gweb_mysql_free_registration (j2c_resp_t *j2cresp)
     return MYSQL_STATUS_OK;
 }
 
-static const char *login_qry_fields[] = {
-    [FIELD_LOGIN_RESP_CODE] = NULL,
-    [FIELD_LOGIN_RESP_DESC] = NULL,
-    [FIELD_LOGIN_RESP_UID] = "UserRegInfo.UID",
-    [FIELD_LOGIN_RESP_FNAME] = "UserRegInfo.FirstName",
-    [FIELD_LOGIN_RESP_LNAME] = "UserRegInfo.LastName",
-    [FIELD_LOGIN_RESP_EMAIL] = "UserRegInfo.Email",
-    [FIELD_LOGIN_RESP_PHONE] = "UserPhone.Phone",
-    [FIELD_LOGIN_RESP_ADDRESS1] = "UserAddress.Address1",
-    [FIELD_LOGIN_RESP_ADDRESS2] = "UserAddress.Address2",
-    [FIELD_LOGIN_RESP_ADDRESS3] = "UserAddress.Address3",
-    [FIELD_LOGIN_RESP_COUNTRY] = "UserAddress.Country",
-    [FIELD_LOGIN_RESP_STATE] = "UserAddress.State",
-    [FIELD_LOGIN_RESP_PINCODE] = "UserAddress.Pincode",
+static const char *profile_info_qry_fields[] = {
+    [FIELD_PROFILE_INFO_RESP_CODE] = NULL,
+    [FIELD_PROFILE_INFO_RESP_DESC] = NULL,
+    [FIELD_PROFILE_INFO_RESP_UID] = "UserRegInfo.UID",
+    [FIELD_PROFILE_INFO_RESP_FNAME] = "UserRegInfo.FirstName",
+    [FIELD_PROFILE_INFO_RESP_LNAME] = "UserRegInfo.LastName",
+    [FIELD_PROFILE_INFO_RESP_EMAIL] = "UserRegInfo.Email",
+    [FIELD_PROFILE_INFO_RESP_PHONE] = "UserPhone.Phone",
+    [FIELD_PROFILE_INFO_RESP_ADDRESS1] = "UserAddress.Address1",
+    [FIELD_PROFILE_INFO_RESP_ADDRESS2] = "UserAddress.Address2",
+    [FIELD_PROFILE_INFO_RESP_ADDRESS3] = "UserAddress.Address3",
+    [FIELD_PROFILE_INFO_RESP_COUNTRY] = "UserAddress.Country",
+    [FIELD_PROFILE_INFO_RESP_STATE] = "UserAddress.State",
+    [FIELD_PROFILE_INFO_RESP_PINCODE] = "UserAddress.Pincode",
     /* NOTE: Multi-record, using below hack */
-    [FIELD_LOGIN_RESP_FACEBOOK_HANDLE] = "UserSocialNetwork.NetworkType",
-    [FIELD_LOGIN_RESP_TWITTER_HANDLE] = "UserSocialNetwork.NetworkHandle",
-    [FIELD_LOGIN_RESP_AVATAR_URL] = "UserRegInfo.AvatarURL",
+    [FIELD_PROFILE_INFO_RESP_FACEBOOK_HANDLE] = "UserSocialNetwork.NetworkType",
+    [FIELD_PROFILE_INFO_RESP_TWITTER_HANDLE] = "UserSocialNetwork.NetworkHandle",
+    [FIELD_PROFILE_INFO_RESP_AVATAR_URL] = "UserRegInfo.AvatarURL",
 };
 
-int
-gweb_mysql_handle_login (j2c_msg_t *j2cmsg, j2c_resp_t **j2cresp)
+/*
+ * Populate complete profile information based on UID or e-mail
+ */
+static int
+gweb_mysql_populate_profile_info (j2c_resp_t *j2cresp, const char *uid,
+                                  const char *email)
 {
-    struct j2c_login_msg *jrecord = &j2cmsg->login;
+    uint8_t qrybuf[MAX_MYSQL_QRYSZ];
+    int len = 0, fld;
 
     MYSQL_RES *result;
+    MYSQL_ROW row;
 
-    uint8_t qrybuf[MAX_MYSQL_QRYSZ];
-    int len = 0, fld, ret = MYSQL_STATUS_OK;
+    J2C_RESP_TABLE(profile_info, *resp) = &j2cresp->profile_info;
+
+    if (uid == NULL && email == NULL) {
+        return GWEB_MYSQL_ERR_NO_RECORD;
+    }
 
     PUSH_BUF(qrybuf, len, "SELECT ");
 
-    for (fld = FIELD_LOGIN_RESP_CODE; fld < FIELD_LOGIN_RESP_MAX; fld++) {
-	if (login_qry_fields[fld] == NULL)
-	    PUSH_BUF(qrybuf, len, "NULL,");
-	else
-	    PUSH_BUF(qrybuf, len, "%s,", login_qry_fields[fld]);
+    for (fld = 0; fld < FIELD_PROFILE_INFO_RESP_MAX; fld++) {
+        if (profile_info_qry_fields[fld] == NULL) {
+            PUSH_BUF(qrybuf, len, "NULL,");
+        } else {
+            PUSH_BUF(qrybuf, len, "%s,", profile_info_qry_fields[fld]);
+        }
     }
 
     len--; /* Strip leading ',' */
@@ -397,94 +407,140 @@ gweb_mysql_handle_login (j2c_msg_t *j2cmsg, j2c_resp_t **j2cresp)
 	     "LEFT JOIN UserPhone USING(UID) "
 	     "LEFT JOIN UserSocialNetwork USING(UID) "
 	     "LEFT JOIN UserAddress USING(UID) "
-	     "WHERE UserRegInfo.Email='%s' AND UserRegInfo.Password='%s'",
-	     jrecord->fields[FIELD_LOGIN_EMAIL],
-	     jrecord->fields[FIELD_LOGIN_PASSWORD]);
+	     "WHERE ");
+
+    if (uid != NULL) {
+        PUSH_BUF(qrybuf, len, "UserRegInfo.UID='%s'", uid);
+    } else if (email != NULL) {
+        PUSH_BUF(qrybuf, len, "UserRegInfo.Email='%s'", email);
+    }
+
     qrybuf[len] = '\0';
+    log_debug("%s: QUERY-----> [%s]\n", __func__, qrybuf);
 
     gweb_mysql_ping();
 
     if (mysql_query(g_mysql_ctx, qrybuf)) {
-	report_mysql_error_noclose(g_mysql_ctx);
-        goto __bail_out;
+        report_mysql_error_noclose(g_mysql_ctx);
+        return GWEB_MYSQL_ERR_UNKNOWN;
     }
 
     if ((result = mysql_store_result(g_mysql_ctx)) == NULL) {
-	report_mysql_error_noclose(g_mysql_ctx);
+        report_mysql_error_noclose(g_mysql_ctx);
+        return GWEB_MYSQL_ERR_UNKNOWN;
+    }
+
+    if (mysql_num_rows(result) == 0) {
+        mysql_free_result(result);
+        return GWEB_MYSQL_ERR_NO_RECORD;
+    }
+
+    if ((row = mysql_fetch_row(result)) == NULL) {
+        mysql_free_result(result);
+        return GWEB_MYSQL_ERR_UNKNOWN;
+    }
+
+    for (fld = FIELD_PROFILE_INFO_RESP_UID;
+         fld < FIELD_PROFILE_INFO_RESP_MAX;
+         fld++) {
+        if (fld == FIELD_PROFILE_INFO_RESP_FACEBOOK_HANDLE ||
+            fld == FIELD_PROFILE_INFO_RESP_TWITTER_HANDLE) {
+            continue;
+        }
+        if (row[fld]) {
+            resp->fields[fld] = strndup(row[fld], strlen(row[fld]));
+        }
+    }
+
+    do {
+        char *network_type = row[FIELD_PROFILE_INFO_RESP_FACEBOOK_HANDLE];
+        int handle_idx = FIELD_PROFILE_INFO_RESP_TWITTER_HANDLE;
+
+        if (network_type) {
+            if (strcasecmp(network_type, "facebook") == 0) {
+                resp->fields[FIELD_PROFILE_INFO_RESP_FACEBOOK_HANDLE] =
+                    strndup(row[handle_idx], strlen(row[handle_idx]));
+
+            } else if (strcasecmp(network_type, "twitter") == 0) {
+                resp->fields[FIELD_PROFILE_INFO_RESP_TWITTER_HANDLE] =
+                    strndup(row[handle_idx], strlen(row[handle_idx]));
+            }
+        }
+    } while ((row = mysql_fetch_row(result)));
+
+    mysql_free_result(result);
+
+    return GWEB_MYSQL_OK;
+}
+
+static int
+gweb_mysql_free_profile_info (j2c_resp_t *j2cresp)
+{
+    int fld;
+    J2C_RESP_TABLE(profile_info, *resp) = &j2cresp->profile_info;
+
+    for (fld = FIELD_PROFILE_INFO_RESP_UID;
+         fld < FIELD_PROFILE_INFO_RESP_MAX; fld++) {
+        if (resp->fields[fld])
+            free(resp->fields[fld]);
+    }
+    return GWEB_MYSQL_OK;
+}
+
+int
+gweb_mysql_handle_login (j2c_msg_t *j2cmsg, j2c_resp_t **j2cresp)
+{
+    uint8_t qrybuf[MAX_MYSQL_QRYSZ];
+    int len = 0, err = GWEB_MYSQL_ERR_UNKNOWN, ret = MYSQL_STATUS_FAIL;
+    int count;
+
+    J2C_MSG_TABLE(login, *jrecord) = &j2cmsg->login;
+
+    /* Allocate for response */
+    gweb_mysql_prepare_response(JSON_C_PROFILE_INFO_RESP,
+                                GWEB_MYSQL_OK,
+                                j2cresp);
+
+    if (!jrecord->fields[FIELD_LOGIN_EMAIL] ||
+        !jrecord->fields[FIELD_LOGIN_PASSWORD]) {
+        err = GWEB_MYSQL_ERR_NO_RECORD;
+        goto __bail_out;
+    }
+    
+    PUSH_BUF(qrybuf, len, "SELECT UID from UserRegInfo WHERE "
+             "UserRegInfo.Email='%s' AND UserRegInfo.Password='%s'",
+             jrecord->fields[FIELD_LOGIN_EMAIL],
+             jrecord->fields[FIELD_LOGIN_PASSWORD]);
+    qrybuf[len] = '\0';
+
+    if ((count = gweb_mysql_get_query_count(qrybuf)) < 0) {
         goto __bail_out;
     }
 
-    if (mysql_num_rows(result) >= 1) {
-        MYSQL_ROW row;
-
-        if ((row = mysql_fetch_row(result)) == NULL) {
-            mysql_free_result(result);
-            goto __bail_out;
-        }
-
-        gweb_mysql_prepare_response(JSON_C_LOGIN_RESP,
-                                    GWEB_MYSQL_OK,
-                                    j2cresp);
-
-	/* Fetch profiles first and then loop to fetch social network
-	 * information.
-	 */
-	for (fld = FIELD_LOGIN_RESP_UID; fld < FIELD_LOGIN_RESP_MAX; fld++) {
-	    if (fld == FIELD_LOGIN_RESP_FACEBOOK_HANDLE ||
-		fld == FIELD_LOGIN_RESP_TWITTER_HANDLE) {
-		continue;
-	    }
-	    if (row[fld]) {
-		(*j2cresp)->login.fields[fld] =
-		    strndup(row[fld], strlen(row[fld]));
-	    }
-	}
-
-	do {
-	    char *network_type = row[FIELD_LOGIN_RESP_FACEBOOK_HANDLE];
-	    int handle_idx = FIELD_LOGIN_RESP_TWITTER_HANDLE;
-
-	    if (network_type) {
-		if (strcasecmp(network_type, "facebook") == 0) {
-		    (*j2cresp)->login.fields[FIELD_LOGIN_RESP_FACEBOOK_HANDLE] =
-			strndup(row[handle_idx], strlen(row[handle_idx]));
-
-		} else if (strcasecmp(network_type, "twitter") == 0) {
-		    (*j2cresp)->login.fields[FIELD_LOGIN_RESP_TWITTER_HANDLE] =
-			strndup(row[handle_idx], strlen(row[handle_idx]));
-		}
-	    }
-	} while ((row = mysql_fetch_row(result)));
-
-    } else {
-	gweb_mysql_prepare_response(JSON_C_LOGIN_RESP,
-				    GWEB_MYSQL_ERR_NO_RECORD,
-				    j2cresp);
-	ret = MYSQL_STATUS_FAIL;
+    if (count == 0) {
+        err = GWEB_MYSQL_ERR_NO_RECORD;
+        goto __bail_out;
     }
-    mysql_free_result(result);
 
-    return ret;
+    err = gweb_mysql_populate_profile_info(*j2cresp, NULL,
+                              jrecord->fields[FIELD_LOGIN_EMAIL]);
+    if (err != GWEB_MYSQL_OK) {
+        goto __bail_out;
+    }
+
+    ret = MYSQL_STATUS_OK;
 
 __bail_out:
-    gweb_mysql_prepare_response(JSON_C_LOGIN_RESP,
-                                GWEB_MYSQL_ERR_UNKNOWN,
-                                j2cresp);
-    return MYSQL_STATUS_FAIL;
+    gweb_mysql_update_response(JSON_C_PROFILE_INFO_RESP, err, j2cresp);
+
+    return ret;
 }
 
 int
 gweb_mysql_free_login (j2c_resp_t *j2cresp)
 {
-    int fld;
-
     if (j2cresp) {
-        struct j2c_login_resp *resp = &j2cresp->login;
-
-	for (fld = FIELD_LOGIN_RESP_UID; fld < FIELD_LOGIN_RESP_MAX; fld++) {
-	    if (resp->fields[fld])
-		free(resp->fields[fld]);
-	}
+        gweb_mysql_free_profile_info(j2cresp);
         free(j2cresp);
     }
     return MYSQL_STATUS_OK;
@@ -1346,6 +1402,58 @@ __bail_out:
 
     gweb_mysql_update_response(JSON_C_UID_QUERY_RESP, err, j2cresp);
     return ret;
+}
+
+int
+gweb_mysql_handle_profile_query (j2c_msg_t *j2cmsg, j2c_resp_t **j2cresp)
+{
+    int err = GWEB_MYSQL_ERR_UNKNOWN, ret = MYSQL_STATUS_FAIL;
+    int count;
+
+    J2C_MSG_TABLE(profile_query, *jrecord) = &j2cmsg->profile_query;
+
+    gweb_mysql_prepare_response(JSON_C_PROFILE_INFO_RESP,
+                                GWEB_MYSQL_OK,
+                                j2cresp);
+
+    if (!jrecord->fields[FIELD_PROFILE_QUERY_UID]) {
+        err = GWEB_MYSQL_ERR_NO_RECORD;
+        goto __bail_out;
+    }
+
+    count = gweb_mysql_check_uid_email(jrecord->fields[FIELD_PROFILE_QUERY_UID],
+                                       NULL);
+    if (count < 0) {
+        goto __bail_out;
+    }
+
+    if (count == 0) {
+        err = GWEB_MYSQL_ERR_NO_RECORD;
+        goto __bail_out;
+    }
+
+    err = gweb_mysql_populate_profile_info(*j2cresp,
+                     jrecord->fields[FIELD_PROFILE_QUERY_UID], NULL);
+    if (err != GWEB_MYSQL_OK) {
+        goto __bail_out;
+    }
+
+    ret = MYSQL_STATUS_OK;
+
+__bail_out:
+    gweb_mysql_update_response(JSON_C_PROFILE_INFO_RESP, err, j2cresp);
+
+    return ret;
+}
+
+int
+gweb_mysql_free_profile_query (j2c_resp_t *j2cresp)
+{
+    if (j2cresp) {
+        gweb_mysql_free_profile_info(j2cresp);
+        free(j2cresp);
+    }
+    return MYSQL_STATUS_OK;
 }
 
 int
