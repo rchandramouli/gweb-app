@@ -65,6 +65,7 @@ echo -e "\n---- LOGIN ----"
 send_json_set_uid '{"login":{"email":"xyz@abc.com","password":"ASHihdihA2677DGSaf"}}'
 
 echo "USER ID: [${uID}]"
+tu1_uid=${uID}
 
 echo -e "\n---- AVATAR UPDATE ----"
 send_json '{"update_avatar":{"id":"'${uID}'","url":"http://amazon-s3-url012345.com/user001.jpg"}}'
@@ -93,6 +94,7 @@ send_json_set_uid '{"login":{"email":"mimi@moe.com","password":"ASHihdihA2677DGS
 echo -e "\n---- LOGIN (correct password) ----"
 send_json_set_uid '{"login":{"email":"mimi@moe.com","password":"AA13!!227798Ajhb"}}'
 echo "USER ID: [${uID}]"
+tu2_uid=${uID}
 
 echo -e "\n---- PROFILE UPDATE-4 (add address, twt) ----"
 send_json '{"update_profile":{"id":"'${uID}'","add1":"elsewhere-1","add2":"","country":"India","state":"MZ","pincode":"342110","twitter_h":"notweet_t"}}'
@@ -170,3 +172,13 @@ send_get_query '/query/cxn_channel?from='${u22_uid}
 send_get_query '/query/cxn_channel?from=UNKNOWN'
 send_get_query '/query/cxn_channel?to='${u44_uid}'&channel=address'
 send_get_query '/query/cxn_channel?to=UNKNOWN&channel=address'
+
+echo -e "\n---- GET PROFILE BASED ON UID ---"
+
+send_get_query '/query/profile?id='${u11_uid}
+send_get_query '/query/profile?id='${tu1_uid}
+send_get_query '/query/profile?id='${tu2_uid}
+send_get_query '/query/profile?id='UNKNOWN-USER
+send_get_query '/query/profile?id='
+
+
