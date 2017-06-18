@@ -14,7 +14,7 @@
 #endif
 
 #include <gweb/common.h>
-#include <gweb/mysqldb_conf.h>
+#include <gweb/config.h>
 #include <gweb/mysqldb_log.h>
 
 /* SQL Macros */
@@ -37,34 +37,56 @@
     "DROP TABLE IF EXISTS UserConnectChannel"
 
 #define CREATE_TABLE_UserRegInfo                                        \
-    "CREATE TABLE IF NOT EXISTS UserRegInfo (UID VARCHAR(16) NOT NULL UNIQUE, "	\
-    "FirstName VARCHAR(20), LastName VARCHAR(20), "                     \
+    "CREATE TABLE IF NOT EXISTS UserRegInfo (UID VARCHAR(16) BINARY "   \
+    "NOT NULL UNIQUE, FirstName VARCHAR(20), LastName VARCHAR(20), "    \
     "Email VARCHAR(40) NOT NULL UNIQUE, StartDate DATETIME, "           \
     "EndDate DATETIME, Password VARCHAR(64), Validated BOOLEAN, "       \
     "UIDVersion INTEGER, DataVersion INTEGER, AvatarURL VARCHAR(100), " \
     "MobileIP VARCHAR(45), PRIMARY KEY (`UID`))"
 
 #define CREATE_TABLE_UserAddress                                        \
-    "CREATE TABLE IF NOT EXISTS UserAddress (UID VARCHAR(16) NOT NULL, " \
+    "CREATE TABLE IF NOT EXISTS UserAddress (UID VARCHAR(16) BINARY NOT NULL, " \
     "AddressType VARCHAR(10), Address1 VARCHAR(40), Address2 VARCHAR(40), " \
     "Address3 VARCHAR(40), State VARCHAR(20), Pincode VARCHAR(6), "     \
     "Country VARCHAR(20))"
 
-#define CREATE_TABLE_UserPhone                                  \
-    "CREATE TABLE IF NOT EXISTS UserPhone (UID VARCHAR(16) NOT NULL, "	\
+#define CREATE_TABLE_UserPhone                                          \
+    "CREATE TABLE IF NOT EXISTS UserPhone (UID VARCHAR(16) BINARY NOT NULL, " \
     "PhoneType VARCHAR(10), Phone VARCHAR(10) NOT NULL)"
 
 #define CREATE_TABLE_UserSocialNetwork                                  \
-    "CREATE TABLE IF NOT EXISTS UserSocialNetwork (UID VARCHAR(16) NOT NULL, " \
+    "CREATE TABLE IF NOT EXISTS UserSocialNetwork (UID VARCHAR(16) BINARY NOT NULL, " \
     "NetworkType VARCHAR(10) NOT NULL, NetworkHandle VARCHAR(40) NOT NULL)"
 
 #define CREATE_TABLE_UserConnectRequest					\
-    "CREATE TABLE IF NOT EXISTS UserConnectRequest (FromUID VARCHAR(16) NOT NULL, " \
+    "CREATE TABLE IF NOT EXISTS UserConnectRequest (FromUID VARCHAR(16) BINARY NOT NULL, " \
     "ToUID VARCHAR(16) NOT NULL, SentOn DATETIME, Flags VARCHAR(10))"
 
 #define CREATE_TABLE_UserConnectChannel                                 \
-    "CREATE TABLE IF NOT EXISTS UserConnectChannel (FromUID VARCHAR(16) NOT NULL, " \
+    "CREATE TABLE IF NOT EXISTS UserConnectChannel (FromUID VARCHAR(16) BINARY NOT NULL, " \
     "ToUID VARCHAR(16) NOT NULL, ConnectedOn DATETIME, ChannelId VARCHAR(16) NOT NULL)"
+
+#define ALTER_TABLE_UserRegInfo                                         \
+    "ALTER TABLE UserRegInfo CHANGE UID UID VARCHAR(16) BINARY NOT NULL UNIQUE"
+
+#define ALTER_TABLE_UserAddress                                         \
+    "ALTER TABLE UserAddress CHANGE UID UID VARCHAR(16) BINARY NOT NULL"
+
+#define ALTER_TABLE_UserPhone                                           \
+    "ALTER TABLE UserPhone CHANGE UID UID VARCHAR(16) BINARY NOT NULL"
+
+#define ALTER_TABLE_UserSocialNetwork                                   \
+    "ALTER TABLE UserSocialNetwork CHANGE UID UID VARCHAR(16) BINARY NOT NULL"
+
+#define ALTER_TABLE_UserConnectRequest                                  \
+    "ALTER TABLE UserConnectRequest "                                   \
+    "CHANGE FromUID FromUID VARCHAR(16) BINARY NOT NULL, "              \
+    "CHANGE ToUID ToUID VARCHAR(16) BINARY NOT NULL"
+
+#define ALTER_TABLE_UserConnectChannel                                  \
+    "ALTER TABLE UserConnectChannel "                                   \
+    "CHANGE FromUID FromUID VARCHAR(16) BINARY NOT NULL, "              \
+    "CHANGE ToUID ToUID VARCHAR(16) BINARY NOT NULL"
 
 /*
  * List of queries to run through to setup tables the first time. Add
@@ -88,10 +110,30 @@ static const char *mysql_create_query[] = {
     CREATE_TABLE_UserConnectChannel,
 };
 
+static const char *mysql_alter_query[] = {
+    ALTER_TABLE_UserRegInfo,
+    ALTER_TABLE_UserAddress,
+    ALTER_TABLE_UserPhone,
+    ALTER_TABLE_UserSocialNetwork,
+    ALTER_TABLE_UserConnectRequest,
+    ALTER_TABLE_UserConnectChannel,
+};
+
+static struct mysql_config *g_mysql_cfg;
+
+#define MYSQL_RUN_QUERY(q, ctx, table)            \
+    do {                                          \
+        for (q = 0; q < ARRAY_SIZE(table); q++) { \
+            if (mysql_query(ctx, table[q])) {     \
+                report_mysql_error(ctx);          \
+            }                                     \
+        }                                         \
+    } while(0)
+
 int main (int argc, char *argv[])
 {
     MYSQL *con;
-    int query, drop_tables = 0;
+    int query, drop_tables = 0, alter_tables = 0;
 
     log_debug("Initializing schema, MySQL version = %s\n",
 	      mysql_get_client_info());
@@ -99,14 +141,30 @@ int main (int argc, char *argv[])
     if (argc > 1 && (argv[1][0] == '-' && argv[1][1] == 'd')) {
 	drop_tables = 1;
     }
-    
+    if (argc > 1 && (argv[1][0] == '-' && argv[1][1] == 'a')) {
+        alter_tables = 1;
+    }
+
     if ((con = mysql_init(NULL)) == NULL) {
 	report_mysql_error(con);
     }
 
-    if (mysql_real_connect(con, MYSQL_DB_HOST, MYSQL_DB_USER,
-			   MYSQL_DB_PASSWORD, MYSQL_DB_NAMESPACE,
-			   0, NULL, CLIENT_MULTI_STATEMENTS) == NULL) {
+    if (config_parse_and_load(argc, argv)) {
+        log_debug("Parse error loading MySQL connect info, exiting.\n");
+        return -1;
+    }
+
+    if ((g_mysql_cfg = config_load_mysqldb()) == NULL) {
+        log_debug("No MySQL connect information found, exiting.\n");
+        return -1;
+    }
+
+    if (mysql_real_connect(con,
+                           g_mysql_cfg->host,
+                           g_mysql_cfg->username,
+                           g_mysql_cfg->password,
+                           g_mysql_cfg->database,
+                           0, NULL, CLIENT_MULTI_STATEMENTS) == NULL) {
 	report_mysql_error(con);
     }
 
@@ -114,19 +172,14 @@ int main (int argc, char *argv[])
 
     /* Run through all MySQL queries */
     if (drop_tables) {
-	for (query = 0; query < ARRAY_SIZE(mysql_drop_query); query++) {
-	    if (mysql_query(con, mysql_drop_query[query])) {
-		report_mysql_error(con);
-	    }
-	}
+        MYSQL_RUN_QUERY(query, con, mysql_drop_query);
     }
 
-    for (query = 0; query < ARRAY_SIZE(mysql_create_query); query++) {
-	if (mysql_query(con, mysql_create_query[query])) {
-	    report_mysql_error(con);
-	}
-    }
+    MYSQL_RUN_QUERY(query, con, mysql_create_query);
 
+    if (alter_tables) {
+        MYSQL_RUN_QUERY(query, con, mysql_alter_query);
+    }
     mysql_close(con);
 
     return 0;
