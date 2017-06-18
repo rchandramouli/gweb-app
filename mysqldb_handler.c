@@ -17,8 +17,8 @@
 #include <gweb/json_struct.h>
 #include <gweb/json_api.h>
 #include <gweb/mysqldb_api.h>
-#include <gweb/mysqldb_conf.h>
 #include <gweb/mysqldb_log.h>
+#include <gweb/config.h>
 #include <gweb/uid.h>
 
 /* Misc macros */
@@ -33,6 +33,7 @@ enum {
     GWEB_MYSQL_OK,
 };
 
+static struct mysql_config *g_mysql_cfg;
 static MYSQL *g_mysql_ctx;
 
 /* Atomic transactions -- depends on the backend storage engine
@@ -175,6 +176,10 @@ gweb_mysql_update_response (int resp_type, int mysql_code,
     case JSON_C_UID_QUERY_RESP:
         generate_default_response(uid_query, UID_QUERY, mysql_code);
         break;
+
+    case JSON_C_AVATAR_QUERY_RESP:
+        generate_default_response(avatar_query, AVATAR_QUERY, mysql_code);
+        break;
         
     default:
         return;
@@ -190,7 +195,13 @@ gweb_mysql_prepare_response (int resp_type, int mysql_code,
         return;
     }
 
-    *response = gweb_mysql_allocate_response();
+    /*
+     * Allocate response only if NULL. This helps to reuse single
+     * response allocation multiple times
+     */
+    if (*response == NULL) {
+        *response = gweb_mysql_allocate_response();
+    }
 
     gweb_mysql_update_response(resp_type, mysql_code, response);
 
@@ -226,7 +237,7 @@ gweb_mysql_get_query_count (const char *query)
     return ret;
 }
 
-static int
+int
 gweb_mysql_check_uid_email (const char *uid_str, const char *email)
 {
     uint8_t qrybuf[MAX_MYSQL_QRYSZ];
@@ -416,7 +427,6 @@ gweb_mysql_populate_profile_info (j2c_resp_t *j2cresp, const char *uid,
     }
 
     qrybuf[len] = '\0';
-    log_debug("%s: QUERY-----> [%s]\n", __func__, qrybuf);
 
     gweb_mysql_ping();
 
@@ -1447,6 +1457,73 @@ __bail_out:
 }
 
 int
+gweb_mysql_handle_avatar_query (j2c_msg_t *j2cmsg, j2c_resp_t **j2cresp)
+{
+    uint8_t qrybuf[MAX_MYSQL_QRYSZ];
+    int err = GWEB_MYSQL_ERR_UNKNOWN, ret = MYSQL_STATUS_FAIL;
+    int len = 0;
+
+    MYSQL_RES *result = NULL;
+    MYSQL_ROW row;
+
+    J2C_MSG_TABLE(avatar_query, *jrecord) = &j2cmsg->avatar_query;
+    J2C_RESP_TABLE(avatar_query, *resp) = NULL;
+
+    gweb_mysql_prepare_response(JSON_C_AVATAR_QUERY_RESP, GWEB_MYSQL_OK, j2cresp);
+    resp = &(*j2cresp)->avatar_query;
+
+    if (!jrecord->fields[FIELD_AVATAR_QUERY_UID]) {
+        err = GWEB_MYSQL_ERR_NO_RECORD;
+        goto __bail_out;
+    }
+
+    PUSH_BUF(qrybuf, len, "SELECT AvatarURL FROM UserRegInfo WHERE UID='%s'",
+             jrecord->fields[FIELD_AVATAR_QUERY_UID]);
+    qrybuf[len] = '\0';
+
+    gweb_mysql_ping();
+
+    if (mysql_query(g_mysql_ctx, qrybuf)) {
+        report_mysql_error_noclose(g_mysql_ctx);
+        goto __bail_out;
+    }
+
+    if ((result = mysql_store_result(g_mysql_ctx)) == NULL) {
+        report_mysql_error_noclose(g_mysql_ctx);
+        goto __bail_out;
+    }
+
+    if (mysql_num_rows(result) == 0) {
+        err = GWEB_MYSQL_ERR_NO_RECORD;
+        goto __bail_out;
+    }
+
+    /* Pick the first matching record */
+    if ((row = mysql_fetch_row(result)) == NULL) {
+        err = GWEB_MYSQL_ERR_NO_RECORD;
+        report_mysql_error_noclose(g_mysql_ctx);
+        goto __bail_out;
+    }
+
+    if (row[0]) {
+        resp->fields[FIELD_AVATAR_QUERY_RESP_URL] = strndup(row[0], strlen(row[0]));
+    } else {
+        resp->fields[FIELD_AVATAR_QUERY_RESP_URL] = strndup("", strlen(""));
+    }
+
+    err = GWEB_MYSQL_OK;
+    ret = MYSQL_STATUS_OK;
+
+__bail_out:
+    if (result) {
+        mysql_free_result(result);
+    }
+
+    gweb_mysql_update_response(JSON_C_AVATAR_QUERY_RESP, err, j2cresp);
+    return ret;
+}
+
+int
 gweb_mysql_free_profile_query (j2c_resp_t *j2cresp)
 {
     if (j2cresp) {
@@ -1462,6 +1539,18 @@ gweb_mysql_free_uid_query (j2c_resp_t *j2cresp)
     if (j2cresp) {
         if (j2cresp->uid_query.fields[FIELD_UID_QUERY_RESP_UID]) {
             free(j2cresp->uid_query.fields[FIELD_UID_QUERY_RESP_UID]);
+        }
+        free(j2cresp);
+    }
+    return MYSQL_STATUS_OK;
+}
+
+int
+gweb_mysql_free_avatar_query (j2c_resp_t *j2cresp)
+{
+    if (j2cresp) {
+        if (j2cresp->avatar_query.fields[FIELD_AVATAR_QUERY_RESP_URL]) {
+            free(j2cresp->avatar_query.fields[FIELD_AVATAR_QUERY_RESP_URL]);
         }
         free(j2cresp);
     }
@@ -1559,10 +1648,10 @@ gweb_mysql_connect (MYSQL *ctx)
     }
 
     if (mysql_real_connect(ctx,
-                           MYSQL_DB_HOST,
-                           MYSQL_DB_USER,
-                           MYSQL_DB_PASSWORD,
-                           MYSQL_DB_NAMESPACE,
+                           g_mysql_cfg->host,
+                           g_mysql_cfg->username,
+                           g_mysql_cfg->password,
+                           g_mysql_cfg->database,
                            0,
                            NULL,
                            CLIENT_MULTI_STATEMENTS) == NULL) {
@@ -1595,6 +1684,11 @@ int
 gweb_mysql_init (void)
 {
     my_bool reconnect = 1;
+
+    if ((g_mysql_cfg = config_load_mysqldb()) == NULL) {
+        log_error("Invalid MYSQL configuration, bailing out\n");
+        return MYSQL_STATUS_FAIL;
+    }
 
     log_debug("Initializing schema, MySQL version = %s\n",
 	      mysql_get_client_info());

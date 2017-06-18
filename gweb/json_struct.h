@@ -17,6 +17,7 @@ enum {
     JSON_C_CXN_CHANNEL_QUERY_MSG,
     JSON_C_UID_QUERY_MSG,
     JSON_C_PROFILE_QUERY_MSG,
+    JSON_C_AVATAR_QUERY_MSG,
     /* MSG-END */ JSON_C_MSG_MAX,
 };
 
@@ -31,6 +32,7 @@ enum {
     JSON_C_CXN_CHANNEL_QUERY_RESP,
     JSON_C_UID_QUERY_RESP,
     JSON_C_PROFILE_INFO_RESP,
+    JSON_C_AVATAR_QUERY_RESP,
     /* RESP-END */ JSON_C_RESP_MAX,
 };
 
@@ -110,6 +112,11 @@ enum _JSON_C_UID_QUERY_MSG_FIELDS {
 enum _JSON_C_PROFILE_QUERY_MSG_FIELDS {
     FIELD_PROFILE_QUERY_UID,
     FIELD_PROFILE_QUERY_MAX,
+};
+
+enum _JSON_C_AVATAR_QUERY_MSG_FIELDS {
+    FIELD_AVATAR_QUERY_UID,
+    FIELD_AVATAR_QUERY_MAX,
 };
 
 enum _JSON_C_REGISTRATION_RESP_FIELDS {
@@ -201,6 +208,13 @@ enum _JSON_C_UID_QUERY_RESP_FIELDS {
     FIELD_UID_QUERY_RESP_MAX,
 };
 
+enum _JSON_C_AVATAR_QUERY_RESP_FIELDS {
+    FIELD_AVATAR_QUERY_RESP_CODE,
+    FIELD_AVATAR_QUERY_RESP_DESC,
+    FIELD_AVATAR_QUERY_RESP_URL,
+    FIELD_AVATAR_QUERY_RESP_MAX,
+};
+
 #define J2C_MSG_TABLE(name, ...)                \
     struct j2c_##name##_msg __VA_ARGS__
 
@@ -219,6 +233,7 @@ J2C_MSG_STRUCT(cxn_request_query, FIELD_CXN_REQUEST_QUERY_MAX);
 J2C_MSG_STRUCT(cxn_channel_query, FIELD_CXN_CHANNEL_QUERY_MAX);
 J2C_MSG_STRUCT(uid_query, FIELD_UID_QUERY_MAX);
 J2C_MSG_STRUCT(profile_query, FIELD_PROFILE_QUERY_MAX);
+J2C_MSG_STRUCT(avatar_query, FIELD_AVATAR_QUERY_MAX);
 
 typedef union {
     J2C_MSG_TABLE(registration, registration);
@@ -231,6 +246,7 @@ typedef union {
     J2C_MSG_TABLE(cxn_channel_query, cxn_channel_query);
     J2C_MSG_TABLE(uid_query, uid_query);
     J2C_MSG_TABLE(profile_query, profile_query);
+    J2C_MSG_TABLE(avatar_query, avatar_query);
 } j2c_msg_t;
 
 #define J2C_RESP_TABLE(name, ...)               \
@@ -248,6 +264,7 @@ J2C_RESP_STRUCT(cxn_request, FIELD_CXN_REQUEST_RESP_MAX);
 J2C_RESP_STRUCT(cxn_channel, FIELD_CXN_CHANNEL_RESP_MAX);
 J2C_RESP_STRUCT(uid_query, FIELD_UID_QUERY_RESP_MAX);
 J2C_RESP_STRUCT(profile_info, FIELD_PROFILE_INFO_RESP_MAX);
+J2C_RESP_STRUCT(avatar_query, FIELD_AVATAR_QUERY_RESP_MAX);
 
 struct j2c_cxn_request_query_resp_array1 {
     char *fields[FIELD_CXN_REQUEST_QUERY_RESP_ARRAY_END -
@@ -281,6 +298,7 @@ typedef union {
     J2C_RESP_TABLE(cxn_channel_query, cxn_channel_query);
     J2C_RESP_TABLE(uid_query, uid_query);
     J2C_RESP_TABLE(profile_info, profile_info);
+    J2C_RESP_TABLE(avatar_query, avatar_query);
 } j2c_resp_t;
 
 #endif // JSON_STRUCT_H

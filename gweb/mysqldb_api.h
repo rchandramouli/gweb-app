@@ -24,6 +24,7 @@ extern int gweb_mysql_handle_cxn_request_query (j2c_msg_t *j2cmsg, j2c_resp_t **
 extern int gweb_mysql_handle_cxn_channel_query (j2c_msg_t *j2cmsg, j2c_resp_t **j2cresp);
 extern int gweb_mysql_handle_uid_query (j2c_msg_t *j2cmsg, j2c_resp_t **j2cresp);
 extern int gweb_mysql_handle_profile_query (j2c_msg_t *j2cmsg, j2c_resp_t **j2cresp);
+extern int gweb_mysql_handle_avatar_query (j2c_msg_t *j2cmsg, j2c_resp_t **j2cresp);
 
 extern int gweb_mysql_free_registration (j2c_resp_t *j2cresp);
 extern int gweb_mysql_free_login (j2c_resp_t *j2cresp);
@@ -35,7 +36,10 @@ extern int gweb_mysql_free_cxn_request_query (j2c_resp_t *j2cresp);
 extern int gweb_mysql_free_cxn_channel_query (j2c_resp_t *j2cresp);
 extern int gweb_mysql_free_uid_query (j2c_resp_t *j2cresp);
 extern int gweb_mysql_free_profile_query (j2c_resp_t *j2cresp);
+extern int gweb_mysql_free_avatar_query (j2c_resp_t *j2cresp);
 
+extern int gweb_mysql_check_uid_email (const char *uid_str, const char *email);
+  
 extern int gweb_mysql_ping (void);
 extern int gweb_mysql_init (void);
 extern int gweb_mysql_shutdown (void);

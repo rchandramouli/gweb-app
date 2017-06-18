@@ -96,6 +96,10 @@ static const char *_table_profile_query_msg_fields[] = {
     [FIELD_PROFILE_QUERY_UID] = "id",
 };
 
+static const char *_table_avatar_query_msg_fields[] = {
+    [FIELD_AVATAR_QUERY_UID] = "id",
+};
+
 static const char *_table_registration_resp_fields[] = {
     [FIELD_REGISTRATION_RESP_CODE] = "code",
     [FIELD_REGISTRATION_RESP_DESC] = "description",
@@ -173,6 +177,12 @@ static const char *_table_uid_query_resp_fields[] = {
     [FIELD_UID_QUERY_RESP_CODE] = "code",
     [FIELD_UID_QUERY_RESP_DESC] = "description",
     [FIELD_UID_QUERY_RESP_UID] = "id",
+};
+
+static const char *_table_avatar_query_resp_fields[] = {
+    [FIELD_AVATAR_QUERY_RESP_CODE] = "code",
+    [FIELD_AVATAR_QUERY_RESP_DESC] = "description",
+    [FIELD_AVATAR_QUERY_RESP_URL] = "url",
 };
 
 #define table_field_at_index(tbl, findex)				\
@@ -384,6 +394,11 @@ json_dummy_array_response_generator(profile_query)
 json_dummy_array_response_generator(profile_info)
 json_response_generator(profile_info)
 
+json_dump_record_generator(avatar_query)
+json_parse_record_generator(avatar_query)
+json_dummy_array_response_generator(avatar_query)
+json_response_generator(avatar_query)
+
 #define JSON_PARSE_FN(tbl)     gweb_json_parse_record_##tbl
 #define JSON_RESP_FN(tbl)      gweb_json_gen_response_##tbl
 
@@ -469,6 +484,13 @@ struct json_map_info _j2c_map_info[] = {
                      JSON_RESP_FN(profile_info),
                      gweb_mysql_handle_profile_query,
                      gweb_mysql_free_profile_query),
+
+    API_RECORD_ENTRY(JSON_C_AVATAR_QUERY_MSG,
+                     "avatar_query",
+                     JSON_PARSE_FN(avatar_query),
+                     JSON_RESP_FN(avatar_query),
+                     gweb_mysql_handle_avatar_query,
+                     gweb_mysql_free_avatar_query),
 };
 
 /*
@@ -582,7 +604,9 @@ gweb_json_get_processor (void *connection, const char *url,
     } else if (strcmp(url, "/query/profile") == 0) {
         parse_get_to_json_tokens(connection, profile_query, json_get_buf, len);
 
-        log_debug("%s: query string - %s\n", __func__, json_get_buf);
+    } else if (strcmp(url, "/query/avatar") == 0) {
+        parse_get_to_json_tokens(connection, avatar_query, json_get_buf, len);
+
     } else {
         is_valid_qry = 0;
     }

@@ -21,11 +21,21 @@
 #include <gweb/server.h>
 #include <gweb/json_api.h>
 #include <gweb/mysqldb_api.h>
+#include <gweb/config.h>
+#include <gweb/avatardb.h>
 
 /* Global structures */
 enum {
-    HTTP_REQ_POST = 1,
-    HTTP_REQ_GET = 2,
+    HTTP_REQ_INVAL       = 0,
+    HTTP_REQ_POST        = 1,
+    HTTP_REQ_POST_UPLOAD = 2,
+    HTTP_REQ_POST_JSON   = 3,
+    HTTP_REQ_GET         = 4,
+};
+
+/* POST upload type */
+enum {
+    HTTP_POST_UPLOAD_AVATAR = 1,
 };
 
 /* Connection info to retain the response structure for POST/PUT/GET
@@ -36,6 +46,8 @@ struct http_cxn_info {
     char *json_response;
     const char *url;
     int status_code;
+    int upload_type;
+    void *priv;
     struct MHD_Connection *connection;
     struct MHD_Response *response;
     struct MHD_PostProcessor *pp;
@@ -110,6 +122,80 @@ static int check_json_content (void *cls, enum MHD_ValueKind kind,
     return MHD_YES;
 }
 
+static void
+gweb_build_http_response (struct http_cxn_info *cxn, char *resp, int status)
+{
+    if (resp) {
+        cxn->response = mhd_frame_response(cxn->connection, (const char *)resp);
+        cxn->status_code = (status == 0) ? MHD_HTTP_OK: MHD_HTTP_NOT_FOUND;
+    } else {
+        /* Generate based on status */
+        if (status) {
+            cxn->response = mhd_frame_response(cxn->connection,
+                                               HTTP_RESPONSE_404_NOTFOUND);
+            cxn->status_code = MHD_HTTP_NOT_FOUND;
+        } else {
+            cxn->response = mhd_frame_response(cxn->connection,
+                                               HTTP_RESPONSE_200_OK);
+            cxn->status_code = MHD_HTTP_OK;
+        }
+    }
+}
+
+static int
+post_upload_completion_handler (void *coninfo_cls)
+{
+    struct http_cxn_info *httpcxn = coninfo_cls;
+    char *response = NULL;
+    int status = 0;
+
+    if (httpcxn->upload_type == HTTP_POST_UPLOAD_AVATAR) {
+        if (avatardb_handle_upload_complete(&httpcxn->priv, &response, &status) < 0)
+            status = -1;
+        avatardb_handle_upload_cleanup(&httpcxn->priv);
+    }
+
+    gweb_build_http_response(httpcxn, response, status);
+
+    if (response) {
+        free(response);
+    }
+
+    return MHD_YES;
+}
+
+static int
+post_upload_handler (void *coninfo_cls, enum MHD_ValueKind kind, const char *key,
+                     const char *filename, const char *content_type,
+                     const char *transfer_encoding, const char *data, uint64_t off,
+                     size_t size)
+{
+    struct http_cxn_info *httpcxn = coninfo_cls;
+
+    char *response = NULL;
+    int status = 0, ret;
+
+    if (httpcxn->upload_type == HTTP_POST_UPLOAD_AVATAR) {
+        ret = avatardb_handle_uploaded_block(&httpcxn->priv, key, data, size, off,
+                                             content_type, transfer_encoding,
+                                             &response, &status);
+        if (ret >= 0) { /* continue */
+            return MHD_YES;
+
+        } else if (ret < 0) {
+            log_error("Handling Avatar upload failed!\n");
+            status = -1;
+        }
+    }
+
+    gweb_build_http_response(httpcxn, response, status);
+    if (response) {
+        free(response);
+    }
+
+    return (httpcxn->status_code == MHD_HTTP_NOT_FOUND) ? MHD_NO: MHD_YES;
+}
+
 static int
 json_post_handler (void *coninfo_cls, enum MHD_ValueKind kind, const char *key,
 		   const char *filename, const char *content_type,
@@ -120,30 +206,26 @@ json_post_handler (void *coninfo_cls, enum MHD_ValueKind kind, const char *key,
     char *response = NULL;
     int status;
 
-    if (httpcxn->cxn_type == HTTP_REQ_POST) {
+    if (httpcxn->cxn_type == HTTP_REQ_POST_JSON) {
         if (gweb_json_post_processor(data, size, &response, &status)) {
             log_error("JSON post processor failed to handle API\n");
-            return MHD_NO;
+            status = -1;
         }
 
     } else if (httpcxn->cxn_type == HTTP_REQ_GET) {
         if (gweb_json_get_processor(httpcxn->connection, httpcxn->url,
                                     &response, &status)) {
             log_error("JSON get processor failed to handle API\n");
-            return MHD_NO;
+            status = -1;
         }
     }
 
-    if (response != NULL) {
-        httpcxn->response = mhd_frame_response(httpcxn->connection,
-                                               (const char *)response);
-        httpcxn->status_code = (status == 0) ? MHD_HTTP_OK: MHD_HTTP_NOT_FOUND;
+    gweb_build_http_response(httpcxn, response, status);
+
+    if (response) {
         free(response);
-    } else {
-        httpcxn->response = mhd_frame_response(httpcxn->connection,
-                                               HTTP_RESPONSE_200_OK);
-        httpcxn->status_code = MHD_HTTP_OK;
     }
+
     return MHD_YES;
 }
 
@@ -162,27 +244,41 @@ static int mhd_connection_handler (void *cls,
     struct http_cxn_info *httpcxn = *con_cls;
     struct http_cxn_info default_httpcxn;
 
-    int has_json = 0, is_get = 0;
+    int has_json = 0, type = HTTP_REQ_INVAL, req_type = 0;
 
+#ifdef DEBUG
     log_debug("URL = <%s>\n", url);
     log_debug("METHOD = <%s>\n", method);
     log_debug("VERSION = <%s>\n", version);
-    log_debug("UPLOAD_DATA = <%s>\n SIZE = %zd\n",
-	   upload_data, *upload_data_size);
+    if (*upload_data_size < 80) {
+        log_debug("UPLOAD_DATA = <%s>\n SIZE = %zd\n",
+                  upload_data, *upload_data_size);
+    } else {
+        log_debug("UPLOAD_DATA_SIZE = %zd\n", *upload_data_size);
+    }
+#endif
 
     if (httpcxn) {
-        if (httpcxn->cxn_type == HTTP_REQ_POST && httpcxn->pp != NULL) {
-            if (*upload_data_size == 0) {
-                mhd_send_page(httpcxn);
-            } else {
-                log_debug("UPLOAD DATA:\n<%s>\n DATA-SIZE: %zd\n", upload_data,
-                          *upload_data_size);
-                MHD_post_process(httpcxn->pp, upload_data, *upload_data_size);
-                *upload_data_size = 0;
+        switch (httpcxn->cxn_type) {
+        case HTTP_REQ_POST:
+        case HTTP_REQ_POST_UPLOAD:
+        case HTTP_REQ_POST_JSON:
+            if (httpcxn->pp != NULL) {
+                if (*upload_data_size == 0) {
+                    post_upload_completion_handler(httpcxn);
+                    mhd_send_page(httpcxn);
+                } else {
+                    MHD_post_process(httpcxn->pp, upload_data, *upload_data_size);
+                    *upload_data_size = 0;
+                }
             }
-        } else if (httpcxn->cxn_type == HTTP_REQ_GET) {
+            break;
+        case HTTP_REQ_GET:
             json_post_handler(httpcxn, 0, NULL, NULL, NULL, NULL, NULL, 0, 0);
             mhd_send_page(httpcxn);
+            break;
+        default:
+            break;
         }
 	return MHD_YES;
     } else {
@@ -195,13 +291,22 @@ static int mhd_connection_handler (void *cls,
                           method);
                 goto __send_error_info;
             }
-            log_debug("FOUND JSON content!\n");
+            type = HTTP_REQ_POST_JSON;
 
         } else if (strcmp(method, "GET") == 0) {
-            is_get = 1;
+            type = HTTP_REQ_GET;
 
+        } else if (strcmp(method, "POST") == 0) {
+            /* Check if this is data upload */
+            if (strcmp(url, "/uploads/avatar") == 0) {
+                type = HTTP_REQ_POST_UPLOAD;
+                req_type = HTTP_POST_UPLOAD_AVATAR;
+
+            } else {
+                type = HTTP_REQ_POST;
+            }
         } else {
-            log_error("Invalid message (neither POST-JSON nor GET)\n");
+            log_error("Invalid message (neither POST nor GET)\n");
             goto __send_error_info;
         }
 
@@ -211,9 +316,15 @@ static int mhd_connection_handler (void *cls,
         }
 
         httpcxn->connection = connection;
-        httpcxn->cxn_type = (is_get) ? HTTP_REQ_GET: HTTP_REQ_POST;
+        httpcxn->cxn_type = type;
+        httpcxn->url = url;
+        if (req_type) {
+            httpcxn->upload_type = req_type;
+        }
 
-        if (httpcxn->cxn_type == HTTP_REQ_POST) {
+        switch (httpcxn->cxn_type) {
+        case HTTP_REQ_POST:
+        case HTTP_REQ_POST_JSON:
             httpcxn->pp = MHD_create_post_processor(connection, GWEB_POST_BUFSZ,
                                                     &json_post_handler, httpcxn);
             if (httpcxn->pp == NULL) {
@@ -221,10 +332,24 @@ static int mhd_connection_handler (void *cls,
                 free(httpcxn);
                 goto __send_error_info;
             }
-        } else {
-            httpcxn->url = url;
+            break;
+        case HTTP_REQ_POST_UPLOAD:
+            httpcxn->pp = MHD_create_post_processor(connection, GWEB_POST_BUFSZ,
+                                                    &post_upload_handler, httpcxn);
+            if (httpcxn->pp == NULL) {
+                log_debug("%s: creating post-upload processor failed!!!\n", __func__);
+                free(httpcxn);
+                goto __send_error_info;
+            }
+            break;
+
+        case HTTP_REQ_GET:
+        default:
+            break;
         }
+
         *con_cls = httpcxn;
+
         return MHD_YES;
     }
 
@@ -251,13 +376,14 @@ mhd_request_completed (void *cls, struct MHD_Connection *connection,
 
     log_debug("%s: request completed ========\n", __func__);
 
-    if (httpcxn->cxn_type == HTTP_REQ_POST) {
-	if (httpcxn->json_response)
-	    free(httpcxn->json_response);
-	if (httpcxn->response)
-	    MHD_destroy_response(httpcxn->response);
-	MHD_destroy_post_processor(httpcxn->pp);
-    }
+    if (httpcxn->json_response)
+        free(httpcxn->json_response);
+    if (httpcxn->response)
+        MHD_destroy_response(httpcxn->response);
+    if (httpcxn->pp)
+        MHD_destroy_post_processor(httpcxn->pp);
+    if (httpcxn->priv)
+        free(httpcxn->priv);
 
     free(httpcxn);
     *con_cls = NULL;
@@ -352,6 +478,9 @@ int main (int argc, char *argv[])
 	return -1;
     }
 
+    /* Parse config file */
+    config_parse_and_load(argc, argv);
+
     /* Initialize MySQL */
     if (gweb_mysql_init()) {
 	log_error("opening MYSQL connection failed\n");
@@ -359,6 +488,14 @@ int main (int argc, char *argv[])
 	    MHD_stop_daemon(g_daemon);
 	}
 	return -1;
+    }
+
+    if (avatardb_init()) {
+        log_error("avatar DB initialization failed\n");
+        if (g_daemon) {
+            MHD_stop_daemon(g_daemon);
+        }
+        return -1;
     }
     
     g_daemon = daemon;
