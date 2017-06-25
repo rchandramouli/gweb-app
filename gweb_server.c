@@ -152,13 +152,13 @@ post_upload_completion_handler (void *coninfo_cls)
     if (httpcxn->upload_type == HTTP_POST_UPLOAD_AVATAR) {
         if (avatardb_handle_upload_complete(&httpcxn->priv, &response, &status) < 0)
             status = -1;
+
         avatardb_handle_upload_cleanup(&httpcxn->priv);
-    }
 
-    gweb_build_http_response(httpcxn, response, status);
-
-    if (response) {
-        free(response);
+        gweb_build_http_response(httpcxn, response, status);
+        if (response) {
+            free(response);
+        }
     }
 
     return MHD_YES;
