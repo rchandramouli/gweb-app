@@ -18,6 +18,8 @@ enum {
     JSON_C_UID_QUERY_MSG,
     JSON_C_PROFILE_QUERY_MSG,
     JSON_C_AVATAR_QUERY_MSG,
+    JSON_C_CXN_PREFERENCE_MSG,
+    JSON_C_CXN_PREFERENCE_QUERY_MSG,
     /* MSG-END */ JSON_C_MSG_MAX,
 };
 
@@ -33,6 +35,8 @@ enum {
     JSON_C_UID_QUERY_RESP,
     JSON_C_PROFILE_INFO_RESP,
     JSON_C_AVATAR_QUERY_RESP,
+    JSON_C_CXN_PREFERENCE_RESP,
+    JSON_C_CXN_PREFERENCE_QUERY_RESP,
     /* RESP-END */ JSON_C_RESP_MAX,
 };
 
@@ -119,6 +123,21 @@ enum _JSON_C_AVATAR_QUERY_MSG_FIELDS {
     FIELD_AVATAR_QUERY_MAX,
 };
 
+enum _JSON_C_CXN_PREFERENCE_MSG_FIELDS {
+    FIELD_CXN_PREFERENCE_UID,
+    FIELD_CXN_PREFERENCE_PREFERENCE,
+    FIELD_CXN_PREFERENCE_ARRAY_START,
+    FIELD_CXN_PREFERENCE_CHANNEL_TYPE,
+    FIELD_CXN_PREFERENCE_FLAG,
+    FIELD_CXN_PREFERENCE_ARRAY_END,
+    FIELD_CXN_PREFERENCE_MAX,
+};
+
+enum _JSON_C_CXN_PREFERENCE_QUERY_MSG_FIELDS {
+    FIELD_CXN_PREFERENCE_QUERY_UID,
+    FIELD_CXN_PREFERENCE_QUERY_MAX,
+};
+
 enum _JSON_C_REGISTRATION_RESP_FIELDS {
     FIELD_REGISTRATION_RESP_CODE,
     FIELD_REGISTRATION_RESP_DESC,
@@ -150,6 +169,7 @@ enum _JSON_C_PROFILE_INFO_RESP_FIELDS {
     FIELD_PROFILE_INFO_RESP_FACEBOOK_HANDLE,
     FIELD_PROFILE_INFO_RESP_TWITTER_HANDLE,
     FIELD_PROFILE_INFO_RESP_AVATAR_URL,
+    FIELD_PROFILE_INFO_RESP_FLAG,
     FIELD_PROFILE_INFO_RESP_MAX,
 };
 
@@ -215,6 +235,23 @@ enum _JSON_C_AVATAR_QUERY_RESP_FIELDS {
     FIELD_AVATAR_QUERY_RESP_MAX,
 };
 
+enum _JSON_C_CXN_PREFERENCE_RESP_FIELDS {
+    FIELD_CXN_PREFERENCE_RESP_CODE,
+    FIELD_CXN_PREFERENCE_RESP_DESC,
+    FIELD_CXN_PREFERENCE_RESP_MAX,
+};
+
+enum _JSON_C_CXN_PREFERENCE_QUERY_RESP_FIELDS {
+    FIELD_CXN_PREFERENCE_QUERY_RESP_CODE,
+    FIELD_CXN_PREFERENCE_QUERY_RESP_DESC,
+    FIELD_CXN_PREFERENCE_QUERY_RESP_RECORD_COUNT,
+    FIELD_CXN_PREFERENCE_QUERY_RESP_ARRAY_START,
+    FIELD_CXN_PREFERENCE_QUERY_RESP_CHANNEL_TYPE,
+    FIELD_CXN_PREFERENCE_QUERY_RESP_FLAG,
+    FIELD_CXN_PREFERENCE_QUERY_RESP_ARRAY_END,
+    FIELD_CXN_PREFERENCE_QUERY_RESP_MAX,
+};
+
 #define J2C_MSG_TABLE(name, ...)                \
     struct j2c_##name##_msg __VA_ARGS__
 
@@ -234,6 +271,18 @@ J2C_MSG_STRUCT(cxn_channel_query, FIELD_CXN_CHANNEL_QUERY_MAX);
 J2C_MSG_STRUCT(uid_query, FIELD_UID_QUERY_MAX);
 J2C_MSG_STRUCT(profile_query, FIELD_PROFILE_QUERY_MAX);
 J2C_MSG_STRUCT(avatar_query, FIELD_AVATAR_QUERY_MAX);
+J2C_MSG_STRUCT(cxn_preference_query, FIELD_CXN_PREFERENCE_QUERY_MAX);
+
+struct j2c_cxn_preference_msg_array1 {
+    const char *fields[FIELD_CXN_PREFERENCE_ARRAY_END -
+                 FIELD_CXN_PREFERENCE_ARRAY_START];
+};
+
+struct j2c_cxn_preference_msg {
+    const char *fields[FIELD_CXN_PREFERENCE_ARRAY_START];
+    int nr_array1_records;
+    struct j2c_cxn_preference_msg_array1 *array1;
+};
 
 typedef union {
     J2C_MSG_TABLE(registration, registration);
@@ -247,6 +296,8 @@ typedef union {
     J2C_MSG_TABLE(uid_query, uid_query);
     J2C_MSG_TABLE(profile_query, profile_query);
     J2C_MSG_TABLE(avatar_query, avatar_query);
+    J2C_MSG_TABLE(cxn_preference, cxn_preference);
+    J2C_MSG_TABLE(cxn_preference_query, cxn_preference_query);
 } j2c_msg_t;
 
 #define J2C_RESP_TABLE(name, ...)               \
@@ -265,6 +316,7 @@ J2C_RESP_STRUCT(cxn_channel, FIELD_CXN_CHANNEL_RESP_MAX);
 J2C_RESP_STRUCT(uid_query, FIELD_UID_QUERY_RESP_MAX);
 J2C_RESP_STRUCT(profile_info, FIELD_PROFILE_INFO_RESP_MAX);
 J2C_RESP_STRUCT(avatar_query, FIELD_AVATAR_QUERY_RESP_MAX);
+J2C_RESP_STRUCT(cxn_preference, FIELD_CXN_PREFERENCE_RESP_MAX);
 
 struct j2c_cxn_request_query_resp_array1 {
     char *fields[FIELD_CXN_REQUEST_QUERY_RESP_ARRAY_END -
@@ -288,6 +340,17 @@ struct j2c_cxn_channel_query_resp {
     struct j2c_cxn_channel_query_resp_array1 *array1;
 };
 
+struct j2c_cxn_preference_query_resp_array1 {
+    char *fields[FIELD_CXN_PREFERENCE_QUERY_RESP_ARRAY_END -
+                 FIELD_CXN_PREFERENCE_QUERY_RESP_ARRAY_START];
+};
+
+struct j2c_cxn_preference_query_resp {
+    char *fields[FIELD_CXN_PREFERENCE_QUERY_RESP_ARRAY_START];
+    int nr_array1_records;
+    struct j2c_cxn_preference_query_resp_array1 *array1;
+};
+
 typedef union {
     J2C_RESP_TABLE(registration, registration);
     J2C_RESP_TABLE(profile, profile);
@@ -299,6 +362,8 @@ typedef union {
     J2C_RESP_TABLE(uid_query, uid_query);
     J2C_RESP_TABLE(profile_info, profile_info);
     J2C_RESP_TABLE(avatar_query, avatar_query);
+    J2C_RESP_TABLE(cxn_preference, cxn_preference);
+    J2C_RESP_TABLE(cxn_preference_query, cxn_preference_query);
 } j2c_resp_t;
 
 #endif // JSON_STRUCT_H

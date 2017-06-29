@@ -180,6 +180,14 @@ gweb_mysql_update_response (int resp_type, int mysql_code,
     case JSON_C_AVATAR_QUERY_RESP:
         generate_default_response(avatar_query, AVATAR_QUERY, mysql_code);
         break;
+
+    case JSON_C_CXN_PREFERENCE_RESP:
+        generate_default_response(cxn_preference, CXN_PREFERENCE, mysql_code);
+        break;
+
+    case JSON_C_CXN_PREFERENCE_QUERY_RESP:
+        generate_default_response(cxn_preference_query, CXN_PREFERENCE_QUERY, mysql_code);
+        break;
         
     default:
         return;
@@ -381,6 +389,7 @@ static const char *profile_info_qry_fields[] = {
     [FIELD_PROFILE_INFO_RESP_FACEBOOK_HANDLE] = "UserSocialNetwork.NetworkType",
     [FIELD_PROFILE_INFO_RESP_TWITTER_HANDLE] = "UserSocialNetwork.NetworkHandle",
     [FIELD_PROFILE_INFO_RESP_AVATAR_URL] = "UserRegInfo.AvatarURL",
+    [FIELD_PROFILE_INFO_RESP_FLAG] = "UserRegInfo.ProfileFlags",
 };
 
 /*
@@ -828,13 +837,85 @@ __bail_out:
     return MYSQL_STATUS_FAIL;
 }
 
+/* Connection Request / Channel Request handling */
+
+#define CXN_REQUEST_FLAG_CLOSED      "closed"
+#define CXN_CHANNEL_BASIC_CONNECT    "connect"
+
+static int
+gweb_mysql_prepare_cxn_accept_query (const char *from_uid, const char *to_uid,
+                                     uint8_t *buf, int *qlen)
+{
+    uint8_t qrybuf[MAX_MYSQL_QRYSZ], utc_dt_str[MAX_DATETIME_STRSZ];
+    int len = 0, qcount = -1, row_count, idx;
+
+    MYSQL_RES *result = NULL;
+    MYSQL_ROW row;
+
+    PUSH_BUF(qrybuf, len, "SELECT ChannelId FROM UserConnectPreferences WHERE "
+             "UID='%s' AND ChannelFlags='public'", to_uid);
+    qrybuf[len++] = '\0';
+
+    if (mysql_query(g_mysql_ctx, qrybuf)) {
+        report_mysql_error_noclose(g_mysql_ctx);
+        goto __bail_out;
+    }
+
+    if ((result = mysql_store_result(g_mysql_ctx)) == NULL) {
+        report_mysql_error_noclose(g_mysql_ctx);
+        goto __bail_out;
+    }
+
+    gweb_get_utc_datetime(utc_dt_str);
+
+    len = 0;
+
+    PUSH_BUF(buf, len, "DELETE FROM UserConnectChannel WHERE "
+             "FromUID='%s' AND ToUID='%s'", from_uid, to_uid);
+    buf[len++] = '\0';
+    qcount = 1;
+
+    /* Insert ChannelId as 'connect' if no public preferences exists */
+    if ((row_count = mysql_num_rows(result)) == 0) {
+        PUSH_BUF(buf, len, "INSERT INTO UserConnectChannel (FromUID, ToUID, "
+                 "ConnectedOn, ChannelId) VALUES ('%s', '%s', '%s', '%s')",
+                 from_uid, to_uid, utc_dt_str,
+                 CXN_CHANNEL_BASIC_CONNECT);
+        buf[len++] = '\0';
+        *qlen = len;
+        qcount++;
+        goto __bail_out;
+    }
+
+    PUSH_BUF(buf, len, "INSERT INTO UserConnectChannel (FromUID, ToUID, "
+             "ConnectedOn, ChannelId) VALUES ");
+
+    for (idx = 0; idx < row_count; idx++) {
+        if ((row = mysql_fetch_row(result)) == NULL) {
+            qcount = -1;
+            goto __bail_out;
+        }
+        PUSH_BUF(buf, len, "('%s', '%s', '%s', '%s'),",
+                 from_uid, to_uid, utc_dt_str, row[0]);
+    }
+    buf[--len] = '\0';
+    *qlen = len;
+    qcount++;
+
+__bail_out:
+    if (result) {
+        mysql_free_result(result);
+    }
+    return qcount;
+}
+
 int
 gweb_mysql_handle_cxn_request (j2c_msg_t *j2cmsg, j2c_resp_t **j2cresp)
 {
-    uint8_t qrybuf[MAX_MYSQL_QRYSZ];
+    uint8_t qrybuf[MAX_MYSQL_QRYSZ], *q_ptr;
     uint8_t utc_dt_str[MAX_DATETIME_STRSZ];
     int err = GWEB_MYSQL_ERR_UNKNOWN, ret = MYSQL_STATUS_FAIL;
-    int len = 0, count, is_update = 0;
+    int len = 0, count, is_update = 0, qry_idx, qcount = 0;
 
     J2C_MSG_TABLE(cxn_request, *jrecord) = &j2cmsg->cxn_request;
 
@@ -898,12 +979,32 @@ gweb_mysql_handle_cxn_request (j2c_msg_t *j2cmsg, j2c_resp_t **j2cresp)
         qrybuf[len++] = '\0';
     }
 
+    /* If the request flag is 'accept' connect the UIDs in the channel
+     * table based on the preferences that are exposed as public
+     */
+    if (!strcmp(jrecord->fields[FIELD_CXN_REQUEST_FLAG], CXN_REQUEST_FLAG_CLOSED)) {
+        int q_len = 0;
+
+        qcount = gweb_mysql_prepare_cxn_accept_query(jrecord->fields[FIELD_CXN_REQUEST_UID],
+                                                     jrecord->fields[FIELD_CXN_REQUEST_TO_UID],
+                                                     &qrybuf[len], &q_len);
+        if (qcount == -1) {
+            goto __bail_out;
+        }
+        len += q_len;
+    }
+
     gweb_mysql_start_transaction();
 
-    if (mysql_query(g_mysql_ctx, qrybuf)) {
-        report_mysql_error_noclose(g_mysql_ctx);
-        gweb_mysql_abort_transaction();
-        goto __bail_out;
+    q_ptr = qrybuf;
+    for (len = qry_idx = 0; qry_idx < qcount + 1; qry_idx++) {
+        log_debug("**# [Q%d] EXEC MYSQL [%s]\n", qry_idx, q_ptr+len);
+        if (mysql_query(g_mysql_ctx, q_ptr + len)) {
+            report_mysql_error_noclose(g_mysql_ctx);
+            gweb_mysql_abort_transaction();
+            goto __bail_out;
+        }
+        len += strlen(q_ptr + len) + 1;
     }
 
     gweb_mysql_commit_transaction();
@@ -911,7 +1012,7 @@ gweb_mysql_handle_cxn_request (j2c_msg_t *j2cmsg, j2c_resp_t **j2cresp)
     err = GWEB_MYSQL_OK;
     ret = MYSQL_STATUS_OK;
 
- __bail_out:
+__bail_out:
     gweb_mysql_update_response(JSON_C_CXN_REQUEST_RESP, err, j2cresp);
     return ret;
 }
@@ -1060,14 +1161,18 @@ gweb_mysql_get_name_avatar_from_uid (const char *uid, char **fname,
 #define CXN_OUTBOUND   (1)
 #define CXN_INBOUND    (2)
 
-#define MYSQL_MAX_CXN_REQUEST_ROWS_PER_QUERY   (20)
-#define MYSQL_MAX_CXN_CHANNEL_ROWS_PER_QUERY   (20)
+#define MYSQL_MAX_CXN_REQUEST_ROWS_PER_QUERY      (20)
+#define MYSQL_MAX_CXN_CHANNEL_ROWS_PER_QUERY      (20)
+#define MYSQL_MAX_CXN_PREFERENCE_ROWS_PER_QUERY   (20)
 
 #define CXN_REQ_IDX(x)   \
    ((FIELD_CXN_REQUEST_QUERY_RESP_##x) - FIELD_CXN_REQUEST_QUERY_RESP_ARRAY_START - 1)
 
 #define CXN_CHNL_IDX(x)                                                 \
     ((FIELD_CXN_CHANNEL_QUERY_RESP_##x) - FIELD_CXN_CHANNEL_QUERY_RESP_ARRAY_START - 1)
+
+#define CXN_PREF_IDX(x)                         \
+    ((FIELD_CXN_PREFERENCE_QUERY_RESP_##x) - FIELD_CXN_PREFERENCE_QUERY_RESP_ARRAY_START - 1)
 
 int
 gweb_mysql_handle_cxn_request_query (j2c_msg_t *j2cmsg, j2c_resp_t **j2cresp)
@@ -1080,7 +1185,7 @@ gweb_mysql_handle_cxn_request_query (j2c_msg_t *j2cmsg, j2c_resp_t **j2cresp)
     char *fname = NULL, *lname = NULL, *avatar = NULL;
     const char *uid = NULL;
 
-    MYSQL_RES *result;
+    MYSQL_RES *result = NULL;
     MYSQL_ROW row;
 
     J2C_MSG_TABLE(cxn_request_query, *jrecord) = &j2cmsg->cxn_request_query;
@@ -1202,11 +1307,10 @@ __send_record:
     ret = MYSQL_STATUS_OK;
 
 __bail_out:
-    mysql_free_result(result);
-
-    gweb_mysql_update_response(JSON_C_CXN_REQUEST_QUERY_RESP,
-                               err,
-                               j2cresp);
+    if (result) {
+        mysql_free_result(result);
+    }
+    gweb_mysql_update_response(JSON_C_CXN_REQUEST_QUERY_RESP, err, j2cresp);
     return ret;
 }
 
@@ -1221,7 +1325,7 @@ gweb_mysql_handle_cxn_channel_query (j2c_msg_t *j2cmsg, j2c_resp_t **j2cresp)
     char *fname = NULL, *lname = NULL, *avatar = NULL;
     const char *uid = NULL;
 
-    MYSQL_RES *result;
+    MYSQL_RES *result = NULL;
     MYSQL_ROW row;
 
     struct j2c_cxn_channel_query_msg *jrecord = &j2cmsg->cxn_channel_query;
@@ -1344,11 +1448,10 @@ __send_record:
     ret = MYSQL_STATUS_OK;
 
 __bail_out:
-    mysql_free_result(result);
-
-    gweb_mysql_update_response(JSON_C_CXN_CHANNEL_QUERY_RESP,
-                               err,
-                               j2cresp);
+    if (result) {
+        mysql_free_result(result);
+    }
+    gweb_mysql_update_response(JSON_C_CXN_CHANNEL_QUERY_RESP, err, j2cresp);
     return ret;
 }
 
@@ -1409,7 +1512,6 @@ __bail_out:
     if (result) {
         mysql_free_result(result);
     }
-
     gweb_mysql_update_response(JSON_C_UID_QUERY_RESP, err, j2cresp);
     return ret;
 }
@@ -1518,10 +1620,194 @@ __bail_out:
     if (result) {
         mysql_free_result(result);
     }
-
     gweb_mysql_update_response(JSON_C_AVATAR_QUERY_RESP, err, j2cresp);
     return ret;
 }
+
+/* CXN - Preference */
+#define MYSQL_MAX_CXN_PREF_QUERY    (20)
+
+#define CXN_PREF_INS_IDX(x)                                             \
+    ((FIELD_CXN_PREFERENCE_##x) - FIELD_CXN_PREFERENCE_ARRAY_START - 1)
+
+int
+gweb_mysql_handle_cxn_preference (j2c_msg_t *j2cmsg, j2c_resp_t **j2cresp)
+{
+    uint8_t qrybuf[MAX_MYSQL_QRYSZ], *qry_delete, *qry_insert;
+    int idx, len = 0, err = GWEB_MYSQL_ERR_UNKNOWN, ret = MYSQL_STATUS_FAIL;
+
+    const char *uid = NULL;
+
+    J2C_MSG_TABLE(cxn_preference, *jrecord) = &j2cmsg->cxn_preference;
+    struct j2c_cxn_preference_msg_array1 *arr;
+
+    gweb_mysql_prepare_response(JSON_C_CXN_PREFERENCE_RESP,
+                                GWEB_MYSQL_OK,
+                                j2cresp);
+
+    uid = jrecord->fields[FIELD_CXN_PREFERENCE_UID];
+
+    if (!uid || !gweb_mysql_check_uid_email(uid, NULL) || !jrecord->nr_array1_records) {
+        err = GWEB_MYSQL_ERR_NO_RECORD;
+        goto __bail_out;
+    }
+
+    /* Delete records that already exists from the given set */
+    qry_delete = &qrybuf[0];
+
+    PUSH_BUF(qrybuf, len,
+             "DELETE FROM CxnPrefTable USING UserConnectPreferences AS CxnPrefTable "
+             "WHERE CxnPrefTable.UID='%s' AND FIND_IN_SET(CxnPrefTable.ChannelId, '",
+             uid);
+
+    for (idx = 0; idx < jrecord->nr_array1_records; idx++) {
+        arr = &jrecord->array1[idx];
+        if (arr->fields[CXN_PREF_INS_IDX(CHANNEL_TYPE)]) {
+            PUSH_BUF(qrybuf, len, "%s,", arr->fields[CXN_PREF_INS_IDX(CHANNEL_TYPE)]);
+        }
+    }
+    if (idx) {
+        len--;
+        PUSH_BUF(qrybuf, len, "')");
+    }
+    qrybuf[len++] = '\0';
+
+    /* Insert records */
+    qry_insert = &qrybuf[len];
+    PUSH_BUF(qrybuf, len, "INSERT INTO UserConnectPreferences "
+             "(UID, ChannelId, ChannelFlags) VALUES ");
+
+    for (idx = 0; idx < jrecord->nr_array1_records; idx++) {
+        arr = &jrecord->array1[idx];
+        if (arr->fields[CXN_PREF_INS_IDX(CHANNEL_TYPE)]) {
+            PUSH_BUF(qrybuf, len, "('%s', '%s', '%s'),",
+                     uid, arr->fields[CXN_PREF_INS_IDX(CHANNEL_TYPE)],
+                     arr->fields[CXN_PREF_INS_IDX(FLAG)]);
+        }
+    }
+    if (idx) {
+        qrybuf[--len] = '\0';
+    }
+
+    gweb_mysql_start_transaction();
+
+    if (mysql_query(g_mysql_ctx, qry_delete)) {
+        goto __abort_transaction;
+    }
+
+    if (mysql_query(g_mysql_ctx, qry_insert)) {
+        goto __abort_transaction;
+    }
+
+    gweb_mysql_commit_transaction();
+
+    err = GWEB_MYSQL_OK;
+    ret = MYSQL_STATUS_OK;
+
+__bail_out:
+    gweb_mysql_update_response(JSON_C_CXN_PREFERENCE_RESP, err, j2cresp);
+    return ret;
+
+__abort_transaction:
+    report_mysql_error_noclose(g_mysql_ctx);
+    gweb_mysql_abort_transaction();
+    gweb_mysql_update_response(JSON_C_CXN_PREFERENCE_RESP, err, j2cresp);
+    return ret;
+}
+
+int
+gweb_mysql_handle_cxn_preference_query (j2c_msg_t *j2cmsg, j2c_resp_t **j2cresp)
+{
+    int match_count, max_rows, idx, rowid = 0, len = 0;
+    int err = GWEB_MYSQL_ERR_UNKNOWN, ret = MYSQL_STATUS_FAIL;
+    uint8_t qrybuf[MAX_MYSQL_QRYSZ], buf[32];
+    const char *uid = NULL;
+
+    MYSQL_RES *result = NULL;
+    MYSQL_ROW row;
+
+    J2C_MSG_TABLE(cxn_preference_query, *jrecord) = &j2cmsg->cxn_preference_query;
+    J2C_RESP_TABLE(cxn_preference_query, *resp) = NULL;
+    struct j2c_cxn_preference_query_resp_array1 *arr = NULL;
+
+    gweb_mysql_prepare_response(JSON_C_CXN_PREFERENCE_QUERY_RESP,
+                                GWEB_MYSQL_OK,
+                                j2cresp);
+
+    resp = &(*j2cresp)->cxn_preference_query;
+    resp->nr_array1_records = -1; /* No records */
+
+    uid = jrecord->fields[FIELD_CXN_PREFERENCE_QUERY_UID];
+
+    if (!uid || !gweb_mysql_check_uid_email(uid, NULL)) {
+        err = GWEB_MYSQL_ERR_NO_RECORD;
+        goto __bail_out;
+    }
+
+    PUSH_BUF(qrybuf, len,
+             "SELECT UID, ChannelId, ChannelFlags FROM UserConnectPreferences "
+             "WHERE UID='%s'", uid);
+    qrybuf[len] = '\0';
+
+    gweb_mysql_ping();
+
+    if (mysql_query(g_mysql_ctx, qrybuf)) {
+        report_mysql_error_noclose(g_mysql_ctx);
+        goto __bail_out;
+    }
+
+    if ((result = mysql_store_result(g_mysql_ctx)) == NULL) {
+        report_mysql_error_noclose(g_mysql_ctx);
+        goto __bail_out;
+    }
+
+    match_count = mysql_num_rows(result);
+    if (match_count == 0) {
+        err = GWEB_MYSQL_ERR_NO_RECORD;
+        goto __bail_out;
+    }
+
+    /* *TBD* For easier access, dump all requested data to a file in
+     * JSON format and upload.
+     */
+    max_rows = (match_count >= MYSQL_MAX_CXN_PREFERENCE_ROWS_PER_QUERY) ?
+        MYSQL_MAX_CXN_PREFERENCE_ROWS_PER_QUERY: match_count;
+
+    resp->array1 = calloc(sizeof(struct j2c_cxn_preference_query_resp_array1),
+                          max_rows);
+    if (!resp->array1) {
+        err = GWEB_MYSQL_ERR_NO_MEMORY;
+        goto __bail_out;
+    }
+
+    for (rowid = idx = 0; idx < match_count && rowid < max_rows; idx++) {
+        if ((row = mysql_fetch_row(result)) == NULL) {
+            err = GWEB_MYSQL_ERR_UNKNOWN;
+            goto __bail_out;
+        }
+
+        /* NOTE: Number of rows in response could be lesser than max_rows */
+        arr = &resp->array1[rowid++];
+
+        arr->fields[CXN_PREF_IDX(CHANNEL_TYPE)] = strndup(row[1], strlen(row[1]));
+        arr->fields[CXN_PREF_IDX(FLAG)] = strndup(row[2], strlen(row[2]));
+    }
+
+    sprintf(buf, "%d", match_count);
+    resp->fields[FIELD_CXN_PREFERENCE_QUERY_RESP_RECORD_COUNT] = strndup(buf, strlen(buf));
+    resp->nr_array1_records = rowid;
+
+    err = GWEB_MYSQL_OK;
+    ret = MYSQL_STATUS_OK;
+
+__bail_out:
+    if (result) {
+        mysql_free_result(result);
+    }
+    gweb_mysql_update_response(JSON_C_CXN_PREFERENCE_QUERY_RESP, err, j2cresp);
+    return ret;
+}
+
 
 int
 gweb_mysql_free_profile_query (j2c_resp_t *j2cresp)
@@ -1575,6 +1861,15 @@ gweb_mysql_free_cxn_channel (j2c_resp_t *j2cresp)
     return MYSQL_STATUS_OK;
 }
 
+int
+gweb_mysql_free_cxn_preference (j2c_resp_t *j2cresp)
+{
+    if (j2cresp) {
+        free(j2cresp);
+    }
+    return MYSQL_STATUS_OK;
+}
+
 #define J2CRESP_FREE_ARRAY(arr, nr, maxfld)             \
     do {                                                \
         int idx, fld;                                   \
@@ -1615,6 +1910,21 @@ gweb_mysql_free_cxn_channel_query (j2c_resp_t *j2cresp)
         J2CRESP_FREE_ARRAY(resp->array1, resp->nr_array1_records,
                            CXN_CHNL_IDX(ARRAY_END));
         free(resp->fields[FIELD_CXN_CHANNEL_QUERY_RESP_RECORD_COUNT]);
+        free(j2cresp);
+    }
+    return MYSQL_STATUS_OK;
+}
+
+int
+gweb_mysql_free_cxn_preference_query (j2c_resp_t *j2cresp)
+{
+    struct j2c_cxn_preference_query_resp *resp = NULL;
+
+    if (j2cresp) {
+        resp = &j2cresp->cxn_preference_query;
+        J2CRESP_FREE_ARRAY(resp->array1, resp->nr_array1_records,
+                           CXN_PREF_IDX(ARRAY_END));
+        free(resp->fields[FIELD_CXN_PREFERENCE_QUERY_RESP_RECORD_COUNT]);
         free(j2cresp);
     }
     return MYSQL_STATUS_OK;

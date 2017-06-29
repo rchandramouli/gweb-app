@@ -25,6 +25,7 @@ struct json_map_info {
     /* JSON-C APIs */
     int (*api_handler) (struct json_object *, j2c_msg_t *);
     int (*api_resp_handler) (j2c_resp_t *, char **);
+    void (*api_free_handler) (j2c_msg_t *);
 
     /* JSON-DB APIs */
     int (*api_db_handler) (j2c_msg_t *, j2c_resp_t **);
@@ -100,6 +101,19 @@ static const char *_table_avatar_query_msg_fields[] = {
     [FIELD_AVATAR_QUERY_UID] = "id",
 };
 
+static const char *_table_cxn_preference_msg_fields[] = {
+    [FIELD_CXN_PREFERENCE_UID] = "id",
+    [FIELD_CXN_PREFERENCE_PREFERENCE] = "preference",
+    [FIELD_CXN_PREFERENCE_ARRAY_START] = JSON_C_ARRAY_START,
+    [FIELD_CXN_PREFERENCE_CHANNEL_TYPE] = "channel",
+    [FIELD_CXN_PREFERENCE_FLAG] = "flag",
+    [FIELD_CXN_PREFERENCE_ARRAY_END] = JSON_C_ARRAY_END,
+};
+
+static const char *_table_cxn_preference_query_msg_fields[] = {
+    [FIELD_CXN_PREFERENCE_QUERY_UID] = "id",
+};
+
 static const char *_table_registration_resp_fields[] = {
     [FIELD_REGISTRATION_RESP_CODE] = "code",
     [FIELD_REGISTRATION_RESP_DESC] = "description",
@@ -128,6 +142,7 @@ static const char *_table_profile_info_resp_fields[] = {
     [FIELD_PROFILE_INFO_RESP_FACEBOOK_HANDLE] = "facebook_h",
     [FIELD_PROFILE_INFO_RESP_TWITTER_HANDLE] = "twitter_h",
     [FIELD_PROFILE_INFO_RESP_AVATAR_URL] = "url",
+    [FIELD_PROFILE_INFO_RESP_FLAG] = "flag",
 };
 
 static const char *_table_avatar_resp_fields[] = {
@@ -185,11 +200,89 @@ static const char *_table_avatar_query_resp_fields[] = {
     [FIELD_AVATAR_QUERY_RESP_URL] = "url",
 };
 
+static const char *_table_cxn_preference_resp_fields[] = {
+    [FIELD_CXN_PREFERENCE_RESP_CODE] = "code",
+    [FIELD_CXN_PREFERENCE_RESP_DESC] = "description",
+};
+
+static const char *_table_cxn_preference_query_resp_fields[] = {
+    [FIELD_CXN_PREFERENCE_QUERY_RESP_CODE] = "code",
+    [FIELD_CXN_PREFERENCE_QUERY_RESP_DESC] = "description",
+    [FIELD_CXN_PREFERENCE_QUERY_RESP_RECORD_COUNT] = "count",
+    [FIELD_CXN_PREFERENCE_QUERY_RESP_ARRAY_START] = JSON_C_ARRAY_START,
+    [FIELD_CXN_PREFERENCE_QUERY_RESP_CHANNEL_TYPE] = "channel",
+    [FIELD_CXN_PREFERENCE_QUERY_RESP_FLAG] = "flag",
+    [FIELD_CXN_PREFERENCE_QUERY_RESP_ARRAY_END] = JSON_C_ARRAY_END,
+};
+
 #define table_field_at_index(tbl, findex)				\
     _table_##tbl##_fields[findex]
 
 #define for_each_table_findex(findex, tbl)				\
     for (findex = 0; findex < ARRAY_SIZE(_table_##tbl##_fields); findex++)
+
+#define json_free_array_handler(tbl)                            \
+    void gweb_json_free_array_handler_##tbl (j2c_msg_t *j2cmsg) \
+    {                                                           \
+        struct j2c_##tbl##_msg *j2ctbl = &j2cmsg->tbl;          \
+                                                                \
+        if (j2ctbl->array1) {                                   \
+            free(j2ctbl->array1);                               \
+            j2ctbl->nr_array1_records = 0;                      \
+            j2ctbl->array1 = NULL;                              \
+        }                                                       \
+    }
+
+#define json_parse_dummy_array_record(tbl)                              \
+    int gweb_json_parse_array_record_##tbl (struct json_object *obj,    \
+                   j2c_msg_t *j2cmsg, int start_index, int field_count) \
+    {                                                                   \
+        return 0;                                                       \
+    }
+
+#define json_parse_array_record_generator(tbl)  \
+    int gweb_json_parse_array_record_##tbl (struct json_object *obj,    \
+                                            j2c_msg_t *j2cmsg,          \
+                                            int start_index,            \
+                                            int field_count)            \
+    {                                                                   \
+        struct json_object *jarr, *jfield;                              \
+        struct j2c_##tbl##_msg *j2ctbl = &j2cmsg->tbl;			\
+        struct j2c_##tbl##_msg_array1 *arr;                             \
+        int rcount, idx, fidx;                                          \
+                                                                        \
+        j2ctbl->nr_array1_records = 0;                                  \
+        j2ctbl->array1 = NULL;                                          \
+        rcount = json_object_array_length(obj);                         \
+        if (rcount == 0) {                                              \
+            return 0;                                                   \
+        }                                                               \
+        j2ctbl->array1 = calloc(sizeof(*arr), rcount);                  \
+        if (j2ctbl->array1 == NULL) {                                   \
+            return 0;                                                   \
+        }                                                               \
+        for (idx = 0; idx < rcount; idx++) {                            \
+            if (!(jarr = json_object_array_get_idx(obj, idx))) {        \
+                continue;                                               \
+            }                                                           \
+            arr = &j2ctbl->array1[idx];                                 \
+            for (fidx = 0; fidx < field_count; fidx++) {                \
+                if (!json_object_object_get_ex(jarr,                    \
+                                               table_field_at_index(tbl##_msg, \
+                                                                    start_index+fidx), \
+                                               &jfield)) {              \
+                    log_debug("<JSON-PARSE-ARR: (" #tbl ")> "           \
+                              "skipping [%d] field '%s' in message\n",  \
+                              idx+1,                                    \
+                              table_field_at_index(tbl##_msg, start_index+fidx)); \
+                    continue;                                           \
+                }                                                       \
+                arr->fields[fidx] = json_object_get_string(jfield);     \
+            }                                                           \
+        }                                                               \
+        j2ctbl->nr_array1_records = idx;                                \
+        return 0;                                                       \
+    }
 
 #define json_parse_record_generator(tbl)				\
     int gweb_json_parse_record_##tbl (struct json_object *jobj,         \
@@ -197,9 +290,26 @@ static const char *_table_avatar_query_resp_fields[] = {
     {									\
 	struct json_object *jfield;					\
 	struct j2c_##tbl##_msg *j2ctbl = &j2cmsg->tbl;			\
-	int findex;							\
+	int findex, fcount, array_count = 0;                            \
 									\
 	for_each_table_findex(findex, tbl##_msg) {			\
+            if (table_field_at_index(tbl##_msg, findex) ==              \
+                JSON_C_ARRAY_START) {                                   \
+                array_count++;                                          \
+                if (array_count == 1) {                                 \
+                    fcount = 1;                                         \
+                    while (table_field_at_index(tbl##_msg,              \
+                                                findex+fcount)          \
+                           != JSON_C_ARRAY_END)                         \
+                        fcount++;                                       \
+                    gweb_json_parse_array_record_##tbl(jfield, j2cmsg,  \
+                                                       findex+1,        \
+                                                       fcount-1);       \
+                }                                                       \
+                while (table_field_at_index(tbl##_msg, ++findex)        \
+                       != JSON_C_ARRAY_END);                            \
+                continue;                                               \
+            }                                                           \
 	    if (!json_object_object_get_ex(jobj,			\
  			 table_field_at_index(tbl##_msg, findex),       \
                          &jfield)) {                                    \
@@ -209,7 +319,9 @@ static const char *_table_avatar_query_resp_fields[] = {
 		j2ctbl->fields[findex] = NULL;				\
 		continue;						\
 	    }								\
-	    j2ctbl->fields[findex] = json_object_get_string(jfield);	\
+            if (json_object_get_array(jfield) == NULL) {                \
+                j2ctbl->fields[findex] = json_object_get_string(jfield); \
+            }
 	}								\
 	if (json_parse_dump)						\
 	    gweb_json_dump_##tbl(j2ctbl);				\
@@ -219,9 +331,15 @@ static const char *_table_avatar_query_resp_fields[] = {
 #define json_dump_record_generator(tbl)                                 \
     static void gweb_json_dump_##tbl (struct j2c_##tbl##_msg *j2ctbl)	\
     {									\
-	int findex;							\
+	int findex;                                                     \
 									\
 	for_each_table_findex(findex, tbl##_msg) {			\
+            if (table_field_at_index(tbl##_msg, findex) ==              \
+                JSON_C_ARRAY_START) {                                   \
+                while (table_field_at_index(tbl##_msg, findex++)        \
+                       != JSON_C_ARRAY_END);                            \
+                continue;                                               \
+            }                                                           \
             log_debug("<JSON-PARSE: (" #tbl ")> %s => %s\n",            \
 		      table_field_at_index(tbl##_msg, findex),	        \
 		      j2ctbl->fields[findex]);				\
@@ -339,74 +457,104 @@ static const char *_table_avatar_query_resp_fields[] = {
 
 /* Registration */
 json_dump_record_generator(registration)
+json_parse_dummy_array_record(registration)
 json_parse_record_generator(registration)
 json_dummy_array_response_generator(registration)
 json_response_generator(registration)
 
 /* Profile */
 json_dump_record_generator(profile)
+json_parse_dummy_array_record(profile)
 json_parse_record_generator(profile)
 json_dummy_array_response_generator(profile)
 json_response_generator(profile)
 
 /* Login */
 json_dump_record_generator(login)
+json_parse_dummy_array_record(login)
 json_parse_record_generator(login)
 json_dummy_array_response_generator(login)
 
 /* Avatar */
 json_dump_record_generator(avatar)
+json_parse_dummy_array_record(avatar)
 json_parse_record_generator(avatar)
 json_dummy_array_response_generator(avatar)
 json_response_generator(avatar)
 
 /* Connect request */
 json_dump_record_generator(cxn_request)
+json_parse_dummy_array_record(cxn_request)
 json_parse_record_generator(cxn_request)
 json_dummy_array_response_generator(cxn_request)
 json_response_generator(cxn_request)
 
 json_dump_record_generator(cxn_request_query)
+json_parse_dummy_array_record(cxn_request_query)
 json_parse_record_generator(cxn_request_query)
 json_array_response_generator(cxn_request_query)
 json_response_generator(cxn_request_query)
 
 /* Connect channel */
 json_dump_record_generator(cxn_channel)
+json_parse_dummy_array_record(cxn_channel)
 json_parse_record_generator(cxn_channel)
 json_dummy_array_response_generator(cxn_channel)
 json_response_generator(cxn_channel)
 
 json_dump_record_generator(cxn_channel_query)
+json_parse_dummy_array_record(cxn_channel_query)
 json_parse_record_generator(cxn_channel_query)
 json_array_response_generator(cxn_channel_query)
 json_response_generator(cxn_channel_query)
 
+/* UID */
 json_dump_record_generator(uid_query)
+json_parse_dummy_array_record(uid_query)
 json_parse_record_generator(uid_query)
 json_dummy_array_response_generator(uid_query)
 json_response_generator(uid_query)
 
+/* Profile */
 json_dump_record_generator(profile_query)
+json_parse_dummy_array_record(profile_query)
 json_parse_record_generator(profile_query)
 json_dummy_array_response_generator(profile_query)
 
 json_dummy_array_response_generator(profile_info)
 json_response_generator(profile_info)
 
+/* Avatar */
 json_dump_record_generator(avatar_query)
+json_parse_dummy_array_record(avatar_query)
 json_parse_record_generator(avatar_query)
 json_dummy_array_response_generator(avatar_query)
 json_response_generator(avatar_query)
 
+/* Connect Preferences */
+json_dump_record_generator(cxn_preference)
+json_parse_array_record_generator(cxn_preference)
+json_parse_record_generator(cxn_preference)
+json_free_array_handler(cxn_preference)
+json_dummy_array_response_generator(cxn_preference)
+json_response_generator(cxn_preference)
+
+json_dump_record_generator(cxn_preference_query)
+json_parse_dummy_array_record(cxn_preference_query)
+json_parse_record_generator(cxn_preference_query)
+json_array_response_generator(cxn_preference_query)
+json_response_generator(cxn_preference_query)
+
 #define JSON_PARSE_FN(tbl)     gweb_json_parse_record_##tbl
 #define JSON_RESP_FN(tbl)      gweb_json_gen_response_##tbl
+#define JSON_FREE_FN(tbl)      gweb_json_free_array_handler_##tbl
 
-#define API_RECORD_ENTRY(idx, name, j_parse, j_resp, db_handler, db_free) \
+#define API_RECORD_ENTRY(idx, name, j_parse, j_resp, j_free, db_handler, db_free) \
     [idx] = {                                                           \
         .api_name          = name,                                      \
         .api_handler       = j_parse,                                   \
         .api_resp_handler  = j_resp,                                    \
+        .api_free_handler  = j_free,                                    \
         .api_db_handler    = db_handler,                                \
         .api_db_resp_free  = db_free,                                   \
     }
@@ -416,6 +564,7 @@ struct json_map_info _j2c_map_info[] = {
                      "registration",
                      JSON_PARSE_FN(registration),
                      JSON_RESP_FN(registration),
+                     NULL,
                      gweb_mysql_handle_registration,
                      gweb_mysql_free_registration),
 
@@ -423,6 +572,7 @@ struct json_map_info _j2c_map_info[] = {
                      "update_profile",
                      JSON_PARSE_FN(profile),
                      JSON_RESP_FN(profile),
+                     NULL,
                      gweb_mysql_handle_profile,
                      gweb_mysql_free_profile),
 
@@ -430,6 +580,7 @@ struct json_map_info _j2c_map_info[] = {
                      "login",
                      JSON_PARSE_FN(login),
                      JSON_RESP_FN(profile_info),
+                     NULL,
                      gweb_mysql_handle_login,
                      gweb_mysql_free_login),
 
@@ -437,6 +588,7 @@ struct json_map_info _j2c_map_info[] = {
                      "update_avatar",
                      JSON_PARSE_FN(avatar),
                      JSON_RESP_FN(avatar),
+                     NULL,
                      gweb_mysql_handle_avatar,
                      gweb_mysql_free_avatar),
 
@@ -444,6 +596,7 @@ struct json_map_info _j2c_map_info[] = {
                      "cxn_request",
                      JSON_PARSE_FN(cxn_request),
                      JSON_RESP_FN(cxn_request),
+                     NULL,
                      gweb_mysql_handle_cxn_request,
                      gweb_mysql_free_cxn_request),
 
@@ -451,8 +604,17 @@ struct json_map_info _j2c_map_info[] = {
                      "cxn_channel",
                      JSON_PARSE_FN(cxn_channel),
                      JSON_RESP_FN(cxn_channel),
+                     NULL,
                      gweb_mysql_handle_cxn_channel,
                      gweb_mysql_free_cxn_channel),
+
+    API_RECORD_ENTRY(JSON_C_CXN_PREFERENCE_MSG,
+                     "cxn_preference",
+                     JSON_PARSE_FN(cxn_preference),
+                     JSON_RESP_FN(cxn_preference),
+                     JSON_FREE_FN(cxn_preference),
+                     gweb_mysql_handle_cxn_preference,
+                     gweb_mysql_free_cxn_preference),
 
     /* GET APIs, does not require PARSE for JSON, retained till JSON
      * handling is cleaned up.
@@ -461,6 +623,7 @@ struct json_map_info _j2c_map_info[] = {
                      "cxn_request_query",
                      JSON_PARSE_FN(cxn_request_query),
                      JSON_RESP_FN(cxn_request_query),
+                     NULL,
                      gweb_mysql_handle_cxn_request_query,
                      gweb_mysql_free_cxn_request_query),
 
@@ -468,6 +631,7 @@ struct json_map_info _j2c_map_info[] = {
                      "cxn_channel_query",
                      JSON_PARSE_FN(cxn_channel_query),
                      JSON_RESP_FN(cxn_channel_query),
+                     NULL,
                      gweb_mysql_handle_cxn_channel_query,
                      gweb_mysql_free_cxn_channel_query),
 
@@ -475,6 +639,7 @@ struct json_map_info _j2c_map_info[] = {
                      "uid_query",
                      JSON_PARSE_FN(uid_query),
                      JSON_RESP_FN(uid_query),
+                     NULL,
                      gweb_mysql_handle_uid_query,
                      gweb_mysql_free_uid_query),
 
@@ -482,6 +647,7 @@ struct json_map_info _j2c_map_info[] = {
                      "profile_query",
                      JSON_PARSE_FN(profile_query),
                      JSON_RESP_FN(profile_info),
+                     NULL,
                      gweb_mysql_handle_profile_query,
                      gweb_mysql_free_profile_query),
 
@@ -489,8 +655,17 @@ struct json_map_info _j2c_map_info[] = {
                      "avatar_query",
                      JSON_PARSE_FN(avatar_query),
                      JSON_RESP_FN(avatar_query),
+                     NULL,
                      gweb_mysql_handle_avatar_query,
                      gweb_mysql_free_avatar_query),
+
+    API_RECORD_ENTRY(JSON_C_CXN_PREFERENCE_QUERY_MSG,
+                     "cxn_preference_query",
+                     JSON_PARSE_FN(cxn_preference_query),
+                     JSON_RESP_FN(cxn_preference_query),
+                     NULL,
+                     gweb_mysql_handle_cxn_preference_query,
+                     gweb_mysql_free_cxn_preference_query),
 };
 
 /*
@@ -547,6 +722,10 @@ gweb_json_post_processor (const char *data, size_t size, char **response, int *s
                 if (j2cinfo->api_db_resp_free) {
                     (*j2cinfo->api_db_resp_free)(j2cresp);
                 }
+            }
+
+            if (j2cinfo->api_free_handler) {
+                (*j2cinfo->api_free_handler)(&j2cmsg);
             }
 
             /* NOTE: we don't handle multiple JSON messages through a
@@ -606,6 +785,9 @@ gweb_json_get_processor (void *connection, const char *url,
 
     } else if (strcmp(url, "/query/avatar") == 0) {
         parse_get_to_json_tokens(connection, avatar_query, json_get_buf, len);
+
+    } else if (strcmp(url, "/query/cxn_preference") == 0) {
+        parse_get_to_json_tokens(connection, cxn_preference_query, json_get_buf, len);
 
     } else {
         is_valid_qry = 0;
