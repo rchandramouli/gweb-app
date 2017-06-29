@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <string.h>
 
 #include <mysql.h>
 
@@ -36,6 +37,9 @@
 #define DROP_TABLE_UserConnectChannel           \
     "DROP TABLE IF EXISTS UserConnectChannel"
 
+#define DROP_TABLE_UserConnectPreferences               \
+    "DROP TABLE IF EXISTS UserConnectPreferences"
+
 #define CREATE_TABLE_UserRegInfo                                        \
     "CREATE TABLE IF NOT EXISTS UserRegInfo (UID VARCHAR(16) BINARY "   \
     "NOT NULL UNIQUE, FirstName VARCHAR(20), LastName VARCHAR(20), "    \
@@ -65,6 +69,13 @@
 #define CREATE_TABLE_UserConnectChannel                                 \
     "CREATE TABLE IF NOT EXISTS UserConnectChannel (FromUID VARCHAR(16) BINARY NOT NULL, " \
     "ToUID VARCHAR(16) NOT NULL, ConnectedOn DATETIME, ChannelId VARCHAR(16) NOT NULL)"
+
+#define CREATE_TABLE_UserConnectPreferences                             \
+    "CREATE TABLE IF NOT EXISTS UserConnectPreferences (UID VARCHAR(16) BINARY NOT NULL, " \
+    "ChannelId VARCHAR(16) NOT NULL, ChannelFlags VARCHAR(16) NOT NULL)"
+
+#define ALTER_TABLE_V2_UserRegInfo                                      \
+    "ALTER TABLE UserRegInfo ADD ProfileFlags VARCHAR(10) DEFAULT 'public'"
 
 #define ALTER_TABLE_UserRegInfo                                         \
     "ALTER TABLE UserRegInfo CHANGE UID UID VARCHAR(16) BINARY NOT NULL UNIQUE"
@@ -99,9 +110,11 @@ static const char *mysql_drop_query[] = {
     DROP_TABLE_UserSocialNetwork,
     DROP_TABLE_UserConnectRequest,
     DROP_TABLE_UserConnectChannel,
+    DROP_TABLE_UserConnectPreferences,
 };
 
-static const char *mysql_create_query[] = {
+/* Version 0 */
+static const char *mysql_db_update_v0[] = {
     CREATE_TABLE_UserRegInfo,
     CREATE_TABLE_UserAddress,
     CREATE_TABLE_UserPhone,
@@ -110,13 +123,19 @@ static const char *mysql_create_query[] = {
     CREATE_TABLE_UserConnectChannel,
 };
 
-static const char *mysql_alter_query[] = {
+/* Version 1 */
+static const char *mysql_db_update_v1[] = {
     ALTER_TABLE_UserRegInfo,
     ALTER_TABLE_UserAddress,
     ALTER_TABLE_UserPhone,
     ALTER_TABLE_UserSocialNetwork,
     ALTER_TABLE_UserConnectRequest,
     ALTER_TABLE_UserConnectChannel,
+};
+
+static const char *mysql_db_update_v2[] = {
+    CREATE_TABLE_UserConnectPreferences,
+    ALTER_TABLE_V2_UserRegInfo,
 };
 
 static struct mysql_config *g_mysql_cfg;
@@ -133,7 +152,7 @@ static struct mysql_config *g_mysql_cfg;
 int main (int argc, char *argv[])
 {
     MYSQL *con;
-    int query, drop_tables = 0, alter_tables = 0;
+    int query, drop_tables = 0, version = -1;
 
     log_debug("Initializing schema, MySQL version = %s\n",
 	      mysql_get_client_info());
@@ -141,8 +160,15 @@ int main (int argc, char *argv[])
     if (argc > 1 && (argv[1][0] == '-' && argv[1][1] == 'd')) {
 	drop_tables = 1;
     }
-    if (argc > 1 && (argv[1][0] == '-' && argv[1][1] == 'a')) {
-        alter_tables = 1;
+
+    if (argc > 1) {
+        if (strcmp(argv[1], "-v0") == 0) {
+            version = 0;
+        } else if (strcmp(argv[1], "-v1") == 0) {
+            version = 1;
+        } else if (strcmp(argv[1], "-v2") == 0) {
+            version = 2;
+        }
     }
 
     if ((con = mysql_init(NULL)) == NULL) {
@@ -175,11 +201,21 @@ int main (int argc, char *argv[])
         MYSQL_RUN_QUERY(query, con, mysql_drop_query);
     }
 
-    MYSQL_RUN_QUERY(query, con, mysql_create_query);
-
-    if (alter_tables) {
-        MYSQL_RUN_QUERY(query, con, mysql_alter_query);
+    /* Pick the update version to run */
+    switch (version) {
+    case 0:
+        MYSQL_RUN_QUERY(query, con, mysql_db_update_v0);
+        break;
+    case 1:
+        MYSQL_RUN_QUERY(query, con, mysql_db_update_v1);
+        break;
+    case 2:
+        MYSQL_RUN_QUERY(query, con, mysql_db_update_v2);
+        break;
+    default:
+        break;
     }
+
     mysql_close(con);
 
     return 0;
