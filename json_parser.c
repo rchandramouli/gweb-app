@@ -321,7 +321,7 @@ static const char *_table_cxn_preference_query_resp_fields[] = {
 	    }								\
             if (json_object_get_array(jfield) == NULL) {                \
                 j2ctbl->fields[findex] = json_object_get_string(jfield); \
-            }
+            }                                                           \
 	}								\
 	if (json_parse_dump)						\
 	    gweb_json_dump_##tbl(j2ctbl);				\

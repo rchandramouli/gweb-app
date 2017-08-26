@@ -1299,7 +1299,7 @@ gweb_mysql_handle_cxn_request_query (j2c_msg_t *j2cmsg, j2c_resp_t **j2cresp)
     }
 
 __send_record:
-    sprintf(buf, "%d", match_count);
+    sprintf(buf, "%d", rowid);
     resp->fields[FIELD_CXN_REQUEST_QUERY_RESP_RECORD_COUNT] = strndup(buf, strlen(buf));
     resp->nr_array1_records = rowid;
 
@@ -1440,7 +1440,7 @@ gweb_mysql_handle_cxn_channel_query (j2c_msg_t *j2cmsg, j2c_resp_t **j2cresp)
     }
 
 __send_record:
-    sprintf(buf, "%d", match_count);
+    sprintf(buf, "%d", rowid);
     resp->fields[FIELD_CXN_CHANNEL_QUERY_RESP_RECORD_COUNT] = strndup(buf, strlen(buf));
     resp->nr_array1_records = rowid;
 

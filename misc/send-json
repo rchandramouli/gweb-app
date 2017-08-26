@@ -126,6 +126,16 @@ send_json '{"update_avatar":{"id":"'${u11_uid}'","url":"http://amazon-s3-url0123
 send_json '{"update_avatar":{"id":"'${u22_uid}'","url":"http://amazon-s3-url012345.com/user0222.jpg"}}'
 send_json '{"update_avatar":{"id":"'${u55_uid}'","url":"http://amazon-s3-url012345.com/user0555.jpg"}}'
 
+echo -e "\n---- GET PROFILE BASED ON UID ---"
+
+send_get_query '/query/profile?id='${u11_uid}
+send_get_query '/query/profile?id='${tu1_uid}
+send_get_query '/query/profile?id='${tu2_uid}
+send_get_query '/query/profile?id='UNKNOWN-USER
+send_get_query '/query/profile?id='
+
+exit
+
 echo -e "\n---- SEND REQUESTS (1->2,3,5(closed), 2->1,3(closed),4, 3->5) ---"
 send_json '{"cxn_request":{"from":"'${u11_uid}'","to":"'${u22_uid}'","flag":"open"}}'
 send_json '{"cxn_request":{"from":"'${u11_uid}'","to":"'${u33_uid}'","flag":"open"}}'
@@ -172,13 +182,3 @@ send_get_query '/query/cxn_channel?from='${u22_uid}
 send_get_query '/query/cxn_channel?from=UNKNOWN'
 send_get_query '/query/cxn_channel?to='${u44_uid}'&channel=address'
 send_get_query '/query/cxn_channel?to=UNKNOWN&channel=address'
-
-echo -e "\n---- GET PROFILE BASED ON UID ---"
-
-send_get_query '/query/profile?id='${u11_uid}
-send_get_query '/query/profile?id='${tu1_uid}
-send_get_query '/query/profile?id='${tu2_uid}
-send_get_query '/query/profile?id='UNKNOWN-USER
-send_get_query '/query/profile?id='
-
-
