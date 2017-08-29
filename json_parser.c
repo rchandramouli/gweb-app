@@ -114,6 +114,24 @@ static const char *_table_cxn_preference_query_msg_fields[] = {
     [FIELD_CXN_PREFERENCE_QUERY_UID] = "id",
 };
 
+static const char *_table_location_msg_fields[] = {
+    [FIELD_LOCATION_UID] = "id",
+    [FIELD_LOCATION_LATITUDE] = "latitude",
+    [FIELD_LOCATION_LONGITUDE] = "longitude",
+    [FIELD_LOCATION_ALTITUDE] = "altitude",
+    [FIELD_LOCATION_EXPIRY] = "expiry",
+    [FIELD_LOCATION_RADIUS] = "radius",
+};
+
+static const char *_table_location_query_msg_fields[] = {
+    [FIELD_LOCATION_QUERY_UID] = "id",
+};
+
+static const char *_table_neighbour_query_msg_fields[] = {
+    [FIELD_NEIGHBOUR_QUERY_UID] = "id",
+    [FIELD_NEIGHBOUR_QUERY_RADIUS] = "radius",
+};
+
 static const char *_table_registration_resp_fields[] = {
     [FIELD_REGISTRATION_RESP_CODE] = "code",
     [FIELD_REGISTRATION_RESP_DESC] = "description",
@@ -215,7 +233,39 @@ static const char *_table_cxn_preference_query_resp_fields[] = {
     [FIELD_CXN_PREFERENCE_QUERY_RESP_ARRAY_END] = JSON_C_ARRAY_END,
 };
 
-#define table_field_at_index(tbl, findex)				\
+static const char *_table_location_resp_fields[] = {
+    [FIELD_LOCATION_RESP_CODE] = "code",
+    [FIELD_LOCATION_RESP_DESC] = "description",
+};
+
+static const char *_table_location_query_resp_fields[] = {
+    [FIELD_LOCATION_QUERY_RESP_CODE] = "code",
+    [FIELD_LOCATION_QUERY_RESP_DESC] = "description",
+    [FIELD_LOCATION_QUERY_RESP_LATITUDE] = "latitude",
+    [FIELD_LOCATION_QUERY_RESP_LONGITUDE] = "longitude",
+    [FIELD_LOCATION_QUERY_RESP_ALTITUDE] = "altitude",
+    [FIELD_LOCATION_QUERY_RESP_LOCATION_TIME] = "time",
+    [FIELD_LOCATION_QUERY_RESP_EXPIRY] = "expiry",
+    [FIELD_LOCATION_QUERY_RESP_RADIUS] = "radius",
+};
+
+static const char *_table_neighbour_query_resp_fields[] = {
+    [FIELD_NEIGHBOUR_QUERY_RESP_CODE] = "code",
+    [FIELD_NEIGHBOUR_QUERY_RESP_DESC] = "description",
+    [FIELD_NEIGHBOUR_QUERY_RESP_RECORD_COUNT] = "count",
+    [FIELD_NEIGHBOUR_QUERY_RESP_ARRAY_START] = JSON_C_ARRAY_START,
+    [FIELD_NEIGHBOUR_QUERY_RESP_UID] = "id",
+    [FIELD_NEIGHBOUR_QUERY_RESP_FNAME] = "fname",
+    [FIELD_NEIGHBOUR_QUERY_RESP_LNAME] = "lname",
+    [FIELD_NEIGHBOUR_QUERY_RESP_AVATAR_URL] = "url",
+    [FIELD_NEIGHBOUR_QUERY_RESP_LATITUDE] = "latitude",
+    [FIELD_NEIGHBOUR_QUERY_RESP_LONGITUDE] = "longitude",
+    [FIELD_NEIGHBOUR_QUERY_RESP_ALTITUDE] = "altitude",
+    [FIELD_NEIGHBOUR_QUERY_RESP_DISTANCE] = "distance",
+    [FIELD_NEIGHBOUR_QUERY_RESP_ARRAY_END] = JSON_C_ARRAY_END,
+};
+
+#define table_field_at_index(tbl, findex)       \
     _table_##tbl##_fields[findex]
 
 #define for_each_table_findex(findex, tbl)				\
@@ -545,6 +595,26 @@ json_parse_record_generator(cxn_preference_query)
 json_array_response_generator(cxn_preference_query)
 json_response_generator(cxn_preference_query)
 
+/* Location */
+json_dump_record_generator(location)
+json_parse_dummy_array_record(location)
+json_parse_record_generator(location)
+json_dummy_array_response_generator(location)
+json_response_generator(location)
+
+json_dump_record_generator(location_query)
+json_parse_dummy_array_record(location_query)
+json_parse_record_generator(location_query)
+json_dummy_array_response_generator(location_query)
+json_response_generator(location_query)
+
+/* Neighbour */
+json_dump_record_generator(neighbour_query)
+json_parse_dummy_array_record(neighbour_query)
+json_parse_record_generator(neighbour_query)
+json_array_response_generator(neighbour_query)
+json_response_generator(neighbour_query)
+
 #define JSON_PARSE_FN(tbl)     gweb_json_parse_record_##tbl
 #define JSON_RESP_FN(tbl)      gweb_json_gen_response_##tbl
 #define JSON_FREE_FN(tbl)      gweb_json_free_array_handler_##tbl
@@ -616,6 +686,14 @@ struct json_map_info _j2c_map_info[] = {
                      gweb_mysql_handle_cxn_preference,
                      gweb_mysql_free_cxn_preference),
 
+    API_RECORD_ENTRY(JSON_C_LOCATION_MSG,
+                     "location",
+                     JSON_PARSE_FN(location),
+                     JSON_RESP_FN(location),
+                     NULL,
+                     gweb_mysql_handle_location,
+                     gweb_mysql_free_location),
+
     /* GET APIs, does not require PARSE for JSON, retained till JSON
      * handling is cleaned up.
      */
@@ -666,6 +744,22 @@ struct json_map_info _j2c_map_info[] = {
                      NULL,
                      gweb_mysql_handle_cxn_preference_query,
                      gweb_mysql_free_cxn_preference_query),
+
+    API_RECORD_ENTRY(JSON_C_LOCATION_QUERY_MSG,
+                     "location_query",
+                     JSON_PARSE_FN(location_query),
+                     JSON_RESP_FN(location_query),
+                     NULL,
+                     gweb_mysql_handle_location_query,
+                     gweb_mysql_free_location_query),
+
+    API_RECORD_ENTRY(JSON_C_NEIGHBOUR_QUERY_MSG,
+                     "neighbour_query",
+                     JSON_PARSE_FN(neighbour_query),
+                     JSON_RESP_FN(neighbour_query),
+                     NULL,
+                     gweb_mysql_handle_neighbour_query,
+                     gweb_mysql_free_neighbour_query),
 };
 
 /*
@@ -788,6 +882,12 @@ gweb_json_get_processor (void *connection, const char *url,
 
     } else if (strcmp(url, "/query/cxn_preference") == 0) {
         parse_get_to_json_tokens(connection, cxn_preference_query, json_get_buf, len);
+
+    } else if (strcmp(url, "/query/location") == 0) {
+        parse_get_to_json_tokens(connection, location_query, json_get_buf, len);
+
+    } else if (strcmp(url, "/query/neighbours") == 0) {
+        parse_get_to_json_tokens(connection, neighbour_query, json_get_buf, len);
 
     } else {
         is_valid_qry = 0;

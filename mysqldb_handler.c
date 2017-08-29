@@ -9,6 +9,8 @@
 #include <string.h>
 #include <errno.h>
 #include <signal.h>
+
+#define __USE_XOPEN
 #include <time.h>
 
 #include <mysql.h>
@@ -67,6 +69,7 @@ gweb_mysql_commit_transaction (void)
     mysql_query(g_mysql_ctx, "COMMIT");
 }
 
+#define GWEB_MYSQL_DATETIME_FORMAT   "%Y-%m-%d %H:%M:%S"
 static void
 gweb_get_utc_datetime (char *dtbuf)
 {
@@ -76,7 +79,32 @@ gweb_get_utc_datetime (char *dtbuf)
     time(&now);
     tm_info = gmtime(&now);
 
-    strftime(dtbuf, MAX_DATETIME_STRSZ, "%Y-%m-%d %H:%M:%S", tm_info);
+    strftime(dtbuf, MAX_DATETIME_STRSZ, GWEB_MYSQL_DATETIME_FORMAT, tm_info);
+}
+
+/* Given an UTC timestamp and expiry in seconds, find if the time has
+ * expired.
+ */
+static int
+gweb_check_time_expired (const char *utc_dt_str, int expiry)
+{
+    time_t now, prev;
+    struct tm tm_prev;
+    double seconds;
+
+    time(&now);
+
+    memset(&tm_prev, 0, sizeof(struct tm));
+    strptime(utc_dt_str, GWEB_MYSQL_DATETIME_FORMAT, &tm_prev);
+
+    prev = mktime(&tm_prev);
+
+    seconds = difftime(now, prev);
+    if (seconds > (double)expiry) {
+        return 1;
+    }
+
+    return 0;
 }
 
 static j2c_resp_t *
@@ -188,7 +216,19 @@ gweb_mysql_update_response (int resp_type, int mysql_code,
     case JSON_C_CXN_PREFERENCE_QUERY_RESP:
         generate_default_response(cxn_preference_query, CXN_PREFERENCE_QUERY, mysql_code);
         break;
-        
+
+    case JSON_C_LOCATION_RESP:
+        generate_default_response(location, LOCATION, mysql_code);
+        break;
+
+    case JSON_C_LOCATION_QUERY_RESP:
+        generate_default_response(location_query, LOCATION_QUERY, mysql_code);
+        break;
+
+    case JSON_C_NEIGHBOUR_QUERY_RESP:
+        generate_default_response(neighbour_query, NEIGHBOUR_QUERY, mysql_code);
+        break;
+
     default:
         return;
     }
@@ -998,7 +1038,7 @@ gweb_mysql_handle_cxn_request (j2c_msg_t *j2cmsg, j2c_resp_t **j2cresp)
 
     q_ptr = qrybuf;
     for (len = qry_idx = 0; qry_idx < qcount + 1; qry_idx++) {
-        log_debug("**# [Q%d] EXEC MYSQL [%s]\n", qry_idx, q_ptr+len);
+        /* log_debug("**# [Q%d] EXEC MYSQL [%s]\n", qry_idx, q_ptr+len); */
         if (mysql_query(g_mysql_ctx, q_ptr + len)) {
             report_mysql_error_noclose(g_mysql_ctx);
             gweb_mysql_abort_transaction();
@@ -1164,6 +1204,7 @@ gweb_mysql_get_name_avatar_from_uid (const char *uid, char **fname,
 #define MYSQL_MAX_CXN_REQUEST_ROWS_PER_QUERY      (20)
 #define MYSQL_MAX_CXN_CHANNEL_ROWS_PER_QUERY      (20)
 #define MYSQL_MAX_CXN_PREFERENCE_ROWS_PER_QUERY   (20)
+#define MYSQL_MAX_NEIGHBOUR_ROWS_PER_QUERY        (20)
 
 #define CXN_REQ_IDX(x)   \
    ((FIELD_CXN_REQUEST_QUERY_RESP_##x) - FIELD_CXN_REQUEST_QUERY_RESP_ARRAY_START - 1)
@@ -1173,6 +1214,9 @@ gweb_mysql_get_name_avatar_from_uid (const char *uid, char **fname,
 
 #define CXN_PREF_IDX(x)                         \
     ((FIELD_CXN_PREFERENCE_QUERY_RESP_##x) - FIELD_CXN_PREFERENCE_QUERY_RESP_ARRAY_START - 1)
+
+#define NEIGHBOUR_IDX(x)                        \
+    ((FIELD_NEIGHBOUR_QUERY_RESP_##x) - FIELD_NEIGHBOUR_QUERY_RESP_ARRAY_START - 1)
 
 int
 gweb_mysql_handle_cxn_request_query (j2c_msg_t *j2cmsg, j2c_resp_t **j2cresp)
@@ -1808,6 +1852,334 @@ __bail_out:
     return ret;
 }
 
+/*
+ * Store given location information for the UID
+ */
+#define GWEB_DEFAULT_GEO_LOCATION_EXPIRY   (3600) /* 1 hour */
+#define GWEB_DEFAULT_GEO_LOCATION_RADIUS   (500)  /* 500 meter radius */
+int
+gweb_mysql_handle_location (j2c_msg_t *j2cmsg, j2c_resp_t **j2cresp)
+{
+    uint8_t qrybuf[MAX_MYSQL_QRYSZ];
+    uint8_t utc_dt_str[MAX_DATETIME_STRSZ];
+    int err = GWEB_MYSQL_ERR_UNKNOWN, ret = MYSQL_STATUS_FAIL;
+    int len = 0, record_found;
+    int expiry_secs, neighbour_radius;
+
+    J2C_MSG_TABLE(location, *jrecord) = &j2cmsg->location;
+
+    gweb_mysql_prepare_response(JSON_C_LOCATION_RESP, GWEB_MYSQL_OK, j2cresp);
+
+    /* Sanity tests */
+    if (!jrecord->fields[FIELD_LOCATION_LATITUDE] ||
+        !jrecord->fields[FIELD_LOCATION_LONGITUDE] ||
+        !jrecord->fields[FIELD_LOCATION_UID]) {
+        err = GWEB_MYSQL_ERR_NO_RECORD;
+        goto __bail_out;
+    }
+
+    gweb_mysql_ping();
+
+    if (!gweb_mysql_check_uid_email(jrecord->fields[FIELD_LOCATION_UID], NULL)) {
+        err = GWEB_MYSQL_ERR_NO_RECORD;
+        goto __bail_out;
+    }
+
+    PUSH_BUF(qrybuf, len,
+             "SELECT UID FROM UserGeoLocation WHERE UID='%s'",
+             jrecord->fields[FIELD_LOCATION_UID]);
+    qrybuf[len] = '\0';
+
+    if (!jrecord->fields[FIELD_LOCATION_EXPIRY]) {
+        expiry_secs = GWEB_DEFAULT_GEO_LOCATION_EXPIRY;
+    } else {
+        expiry_secs = atoi(jrecord->fields[FIELD_LOCATION_EXPIRY]);
+    }
+
+    if (!jrecord->fields[FIELD_LOCATION_RADIUS]) {
+        neighbour_radius = GWEB_DEFAULT_GEO_LOCATION_RADIUS;
+    } else {
+        neighbour_radius = atoi(jrecord->fields[FIELD_LOCATION_RADIUS]);
+    }
+
+    if ((ret = gweb_mysql_get_query_count(qrybuf)) < 0) {
+        report_mysql_error_noclose(g_mysql_ctx);
+        ret = MYSQL_STATUS_FAIL;
+        goto __bail_out;
+    }
+    record_found = ret;
+
+    gweb_get_utc_datetime(utc_dt_str);
+
+    len = 0;
+    if (record_found) {
+        PUSH_BUF(qrybuf, len,
+                 "UPDATE UserGeoLocation SET Location=Point(%lf, %lf), "
+                 "SeenAt='%s', Expiry=%d, Radius=%d WHERE UID='%s'",
+                 atof(jrecord->fields[FIELD_LOCATION_LATITUDE]),
+                 atof(jrecord->fields[FIELD_LOCATION_LONGITUDE]),
+                 utc_dt_str, expiry_secs, neighbour_radius,
+                 jrecord->fields[FIELD_LOCATION_UID]);
+        qrybuf[len] = '\0';
+    } else {
+        PUSH_BUF(qrybuf, len,
+                 "INSERT INTO UserGeoLocation (UID, Location, SeenAt, Expiry, "
+                 "Radius) VALUES ('%s', Point(%lf, %lf), '%s', %d, %d)",
+                 jrecord->fields[FIELD_LOCATION_UID],
+                 atof(jrecord->fields[FIELD_LOCATION_LATITUDE]),
+                 atof(jrecord->fields[FIELD_LOCATION_LONGITUDE]),
+                 utc_dt_str, expiry_secs, neighbour_radius);
+        qrybuf[len] = '\0';
+    }
+
+    gweb_mysql_start_transaction();
+    if (mysql_query(g_mysql_ctx, qrybuf)) {
+        report_mysql_error_noclose(g_mysql_ctx);
+        ret = MYSQL_STATUS_FAIL;
+        gweb_mysql_abort_transaction();
+        goto __bail_out;
+    }
+
+    gweb_mysql_commit_transaction();
+
+    err = GWEB_MYSQL_OK;
+    ret = MYSQL_STATUS_OK;
+
+__bail_out:
+    gweb_mysql_update_response(JSON_C_LOCATION_RESP, err, j2cresp);
+    return ret;
+}
+
+int
+gweb_mysql_handle_location_query (j2c_msg_t *j2cmsg, j2c_resp_t **j2cresp)
+{
+    uint8_t qrybuf[MAX_MYSQL_QRYSZ];
+    int err = GWEB_MYSQL_ERR_UNKNOWN, ret = MYSQL_STATUS_FAIL;
+    int len = 0;
+    const char *uid = NULL;
+
+    MYSQL_RES *result = NULL;
+    MYSQL_ROW row;
+
+    J2C_MSG_TABLE(location_query, *jrecord) = &j2cmsg->location_query;
+    J2C_RESP_TABLE(location_query, *resp) = NULL;
+
+    gweb_mysql_prepare_response(JSON_C_LOCATION_QUERY_RESP,
+                                GWEB_MYSQL_OK,
+                                j2cresp);
+
+    resp = &(*j2cresp)->location_query;
+
+    uid = jrecord->fields[FIELD_LOCATION_QUERY_UID];
+    if (!uid || !gweb_mysql_check_uid_email(uid, NULL)) {
+        err = GWEB_MYSQL_ERR_NO_RECORD;
+        goto __bail_out;
+    }
+
+    PUSH_BUF(qrybuf, len,
+             "SELECT UID, ST_X(Location), ST_Y(Location), SeenAt, Expiry, "
+             "Radius FROM UserGeoLocation WHERE UID='%s'", uid);
+    qrybuf[len] = '\0';
+
+    gweb_mysql_ping();
+
+    if (mysql_query(g_mysql_ctx, qrybuf)) {
+        report_mysql_error_noclose(g_mysql_ctx);
+        goto __bail_out;
+    }
+
+    if ((result = mysql_store_result(g_mysql_ctx)) == NULL) {
+        report_mysql_error_noclose(g_mysql_ctx);
+        goto __bail_out;
+    }
+
+    if (mysql_num_rows(result) == 0) {
+        err = GWEB_MYSQL_ERR_NO_RECORD;
+        goto __bail_out;
+    }
+
+    if ((row = mysql_fetch_row(result)) == NULL) {
+        goto __bail_out;
+    }
+
+    resp->fields[FIELD_LOCATION_QUERY_RESP_LATITUDE] =
+        strndup(row[1], strlen(row[1]));
+    resp->fields[FIELD_LOCATION_QUERY_RESP_LONGITUDE] =
+        strndup(row[2], strlen(row[2]));
+    resp->fields[FIELD_LOCATION_QUERY_RESP_LOCATION_TIME] =
+        strndup(row[3], strlen(row[3]));
+    resp->fields[FIELD_LOCATION_QUERY_RESP_EXPIRY] =
+        strndup(row[4], strlen(row[4]));
+    resp->fields[FIELD_LOCATION_QUERY_RESP_RADIUS] =
+        strndup(row[5], strlen(row[5]));
+
+    err = GWEB_MYSQL_OK;
+    ret = MYSQL_STATUS_OK;
+
+__bail_out:
+    if (result) {
+        mysql_free_result(result);
+    }
+    gweb_mysql_update_response(JSON_C_LOCATION_QUERY_RESP, err, j2cresp);
+    return ret;
+}
+
+int
+gweb_mysql_handle_neighbour_query (j2c_msg_t *j2cmsg, j2c_resp_t **j2cresp)
+{
+    uint8_t qrybuf[MAX_MYSQL_QRYSZ], buf[32];
+    int err = GWEB_MYSQL_ERR_UNKNOWN, ret = MYSQL_STATUS_FAIL;
+    int len = 0, expiry_secs;
+    int match_count, max_rows, idx, rowid = 0;
+
+    const char *radius, *uid = NULL;
+    char *fname, *lname, *avatar;
+
+    MYSQL_RES *result = NULL;
+    MYSQL_ROW row;
+
+    J2C_MSG_TABLE(neighbour_query, *jrecord) = &j2cmsg->neighbour_query;
+    J2C_RESP_TABLE(neighbour_query, *resp) = NULL;
+    struct j2c_neighbour_query_resp_array1 *arr = NULL;
+
+    gweb_mysql_prepare_response(JSON_C_NEIGHBOUR_QUERY_RESP,
+                                GWEB_MYSQL_OK,
+                                j2cresp);
+
+    resp = &(*j2cresp)->neighbour_query;
+    resp->nr_array1_records = -1; /* No records */
+
+    gweb_mysql_ping();
+
+    uid = jrecord->fields[FIELD_NEIGHBOUR_QUERY_UID];
+    if (!uid || !gweb_mysql_check_uid_email(uid, NULL)) {
+        err = GWEB_MYSQL_ERR_NO_RECORD;
+        goto __bail_out;
+    }
+
+    PUSH_BUF(qrybuf, len,
+             "SELECT UID, ST_X(Location), ST_Y(Location), SeenAt, Expiry, "
+             "Radius FROM UserGeoLocation WHERE UID='%s'", uid);
+    qrybuf[len] = '\0';
+
+    if (mysql_query(g_mysql_ctx, qrybuf)) {
+        report_mysql_error_noclose(g_mysql_ctx);
+        goto __bail_out;
+    }
+
+    if ((result = mysql_store_result(g_mysql_ctx)) == NULL) {
+        report_mysql_error_noclose(g_mysql_ctx);
+        goto __bail_out;
+    }
+
+    if (!mysql_num_rows(result)) {
+        err = GWEB_MYSQL_ERR_NO_RECORD;
+        goto __bail_out;
+    }
+
+    if ((row = mysql_fetch_row(result)) == NULL) {
+        err = GWEB_MYSQL_ERR_NO_RECORD;
+        goto __bail_out;
+    }
+
+    if (jrecord->fields[FIELD_NEIGHBOUR_QUERY_RADIUS]) {
+        radius = jrecord->fields[FIELD_NEIGHBOUR_QUERY_RADIUS];
+    } else {
+        radius = row[5];
+    }
+
+    /* Check if the record has expired, if so, return no records */
+    expiry_secs = atoi(row[4]);
+    if (expiry_secs != -1 && gweb_check_time_expired(row[3], expiry_secs)) {
+        err = GWEB_MYSQL_ERR_NO_RECORD;
+        goto __bail_out;
+    }
+
+    len = 0;
+    PUSH_BUF(qrybuf, len,
+             "SELECT UID, ST_X(Location), ST_Y(Location), SeenAt, Expiry, "
+             "Radius, libgeod_inverse(ST_X(Location), ST_Y(Location), %s, %s) "
+             "Distance from UserGeoLocation WHERE UID != '%s' HAVING "
+             "Distance < %s ORDER BY Distance",
+             row[1], row[2], uid, radius);
+    qrybuf[len] = '\0';
+
+    gweb_mysql_ping();
+
+    if (mysql_query(g_mysql_ctx, qrybuf)) {
+        report_mysql_error_noclose(g_mysql_ctx);
+        goto __bail_out;
+    }
+
+    mysql_free_result(result);
+    if ((result = mysql_store_result(g_mysql_ctx)) == NULL) {
+        report_mysql_error_noclose(g_mysql_ctx);
+        goto __bail_out;
+    }
+
+    match_count = mysql_num_rows(result);
+    if (match_count == 0) {
+        goto __send_record;
+    }
+
+    /* *TBD* For easier access, dump all requested data to a file in
+     * JSON format and upload.
+     */
+    max_rows = (match_count >= MYSQL_MAX_NEIGHBOUR_ROWS_PER_QUERY) ?
+        MYSQL_MAX_NEIGHBOUR_ROWS_PER_QUERY: match_count;
+
+    resp->array1 = calloc(max_rows, sizeof(struct j2c_neighbour_query_resp_array1));
+    if (!resp->array1) {
+        err = GWEB_MYSQL_ERR_NO_MEMORY;
+        goto __bail_out;
+    }
+
+    for (rowid = idx = 0; idx < match_count && rowid < max_rows; idx++) {
+        if ((row = mysql_fetch_row(result)) == NULL) {
+            goto __bail_out;
+        }
+
+        /* Check if the matched record meets the expiry time, if not
+         * skip the record.
+         */
+        expiry_secs = atoi(row[4]);
+        if (expiry_secs != -1 && gweb_check_time_expired(row[3], expiry_secs)) {
+            continue;
+        }
+
+        if (gweb_mysql_get_name_avatar_from_uid (row[0], &fname, &lname,
+                                                 &avatar) != MYSQL_STATUS_OK) {
+            log_debug("%s: fetch fname/lname/avatar for uid=[%s] failed",
+                      __func__, row[0]);
+            continue;
+        }
+
+        /* NOTE: number of rows in response could be lesser than max_rows */
+        arr = &resp->array1[rowid++];
+        arr->fields[NEIGHBOUR_IDX(UID)] = strndup(row[0], strlen(row[0]));
+        arr->fields[NEIGHBOUR_IDX(LATITUDE)] = strndup(row[1], strlen(row[1]));
+        arr->fields[NEIGHBOUR_IDX(LONGITUDE)] = strndup(row[2], strlen(row[2]));
+        arr->fields[NEIGHBOUR_IDX(DISTANCE)] = strndup(row[6], strlen(row[6]));
+        arr->fields[NEIGHBOUR_IDX(FNAME)] = fname;
+        arr->fields[NEIGHBOUR_IDX(LNAME)] = lname;
+        arr->fields[NEIGHBOUR_IDX(AVATAR_URL)] = avatar;
+    }
+
+__send_record:
+    sprintf(buf, "%d", rowid);
+    resp->fields[FIELD_NEIGHBOUR_QUERY_RESP_RECORD_COUNT] = strndup(buf, strlen(buf));
+    resp->nr_array1_records = rowid;
+
+    err = GWEB_MYSQL_OK;
+    ret = MYSQL_STATUS_OK;
+
+__bail_out:
+    if (result) {
+        mysql_free_result(result);
+    }
+    gweb_mysql_update_response(JSON_C_NEIGHBOUR_QUERY_RESP, err, j2cresp);
+    return ret;
+}
 
 int
 gweb_mysql_free_profile_query (j2c_resp_t *j2cresp)
@@ -1870,6 +2242,11 @@ gweb_mysql_free_cxn_preference (j2c_resp_t *j2cresp)
     return MYSQL_STATUS_OK;
 }
 
+#define J2CRESP_CHECK_FREE(ptr)                 \
+    if (ptr) {                                  \
+        free(ptr);                              \
+    }
+
 #define J2CRESP_FREE_ARRAY(arr, nr, maxfld)             \
     do {                                                \
         int idx, fld;                                   \
@@ -1925,6 +2302,48 @@ gweb_mysql_free_cxn_preference_query (j2c_resp_t *j2cresp)
         J2CRESP_FREE_ARRAY(resp->array1, resp->nr_array1_records,
                            CXN_PREF_IDX(ARRAY_END));
         free(resp->fields[FIELD_CXN_PREFERENCE_QUERY_RESP_RECORD_COUNT]);
+        free(j2cresp);
+    }
+    return MYSQL_STATUS_OK;
+}
+
+int
+gweb_mysql_free_location (j2c_resp_t *j2cresp)
+{
+    if (j2cresp) {
+        free(j2cresp);
+    }
+    return MYSQL_STATUS_OK;
+}
+
+int
+gweb_mysql_free_location_query (j2c_resp_t *j2cresp)
+{
+    struct j2c_location_query_resp *resp = NULL;
+    int fidx;
+
+    if (j2cresp) {
+        resp = &j2cresp->location_query;
+        for (fidx = FIELD_LOCATION_QUERY_RESP_LATITUDE;
+             fidx < FIELD_LOCATION_QUERY_RESP_MAX;
+             fidx++) {
+            J2CRESP_CHECK_FREE(resp->fields[fidx]);
+        }
+        free(j2cresp);
+    }
+    return MYSQL_STATUS_OK;
+}
+
+int
+gweb_mysql_free_neighbour_query (j2c_resp_t *j2cresp)
+{
+    struct j2c_neighbour_query_resp *resp = NULL;
+
+    if (j2cresp) {
+        resp = &j2cresp->neighbour_query;
+        J2CRESP_FREE_ARRAY(resp->array1, resp->nr_array1_records,
+                           NEIGHBOUR_IDX(ARRAY_END));
+        free(resp->fields[FIELD_NEIGHBOUR_QUERY_RESP_RECORD_COUNT]);
         free(j2cresp);
     }
     return MYSQL_STATUS_OK;

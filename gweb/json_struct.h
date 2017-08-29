@@ -20,6 +20,9 @@ enum {
     JSON_C_AVATAR_QUERY_MSG,
     JSON_C_CXN_PREFERENCE_MSG,
     JSON_C_CXN_PREFERENCE_QUERY_MSG,
+    JSON_C_LOCATION_MSG,
+    JSON_C_LOCATION_QUERY_MSG,
+    JSON_C_NEIGHBOUR_QUERY_MSG,
     /* MSG-END */ JSON_C_MSG_MAX,
 };
 
@@ -37,6 +40,9 @@ enum {
     JSON_C_AVATAR_QUERY_RESP,
     JSON_C_CXN_PREFERENCE_RESP,
     JSON_C_CXN_PREFERENCE_QUERY_RESP,
+    JSON_C_LOCATION_RESP,
+    JSON_C_LOCATION_QUERY_RESP,
+    JSON_C_NEIGHBOUR_QUERY_RESP,
     /* RESP-END */ JSON_C_RESP_MAX,
 };
 
@@ -92,6 +98,27 @@ enum _JSON_C_CXN_CHANNEL_MSG_FIELDS {
     FIELD_CXN_CHANNEL_TO_UID,
     FIELD_CXN_CHANNEL_TYPE,
     FIELD_CXN_CHANNEL_MAX,
+};
+
+enum _JSON_C_LOCATION_MSG_FIELDS {
+    FIELD_LOCATION_UID,
+    FIELD_LOCATION_LATITUDE,
+    FIELD_LOCATION_LONGITUDE,
+    FIELD_LOCATION_ALTITUDE,
+    FIELD_LOCATION_EXPIRY,
+    FIELD_LOCATION_RADIUS,
+    FIELD_LOCATION_MAX,
+};
+
+enum _JSON_C_LOCATION_QUERY_MSG_FIELDS {
+    FIELD_LOCATION_QUERY_UID,
+    FIELD_LOCATION_QUERY_MAX,
+};
+
+enum _JSON_C_NEIGHBOUR_QUERY_MSG_FIELDS {
+    FIELD_NEIGHBOUR_QUERY_UID,
+    FIELD_NEIGHBOUR_QUERY_RADIUS,
+    FIELD_NEIGHBOUR_QUERY_MAX,
 };
 
 enum _JSON_C_CXN_REQUEST_QUERY_MSG_FIELDS {
@@ -252,6 +279,41 @@ enum _JSON_C_CXN_PREFERENCE_QUERY_RESP_FIELDS {
     FIELD_CXN_PREFERENCE_QUERY_RESP_MAX,
 };
 
+enum _JSON_C_LOCATION_RESP_FIELDS {
+    FIELD_LOCATION_RESP_CODE,
+    FIELD_LOCATION_RESP_DESC,
+    FIELD_LOCATION_RESP_MAX,
+};
+
+enum _JSON_C_LOCATION_QUERY_RESP_FIELDS {
+    FIELD_LOCATION_QUERY_RESP_CODE,
+    FIELD_LOCATION_QUERY_RESP_DESC,
+    FIELD_LOCATION_QUERY_RESP_LATITUDE,
+    FIELD_LOCATION_QUERY_RESP_LONGITUDE,
+    FIELD_LOCATION_QUERY_RESP_ALTITUDE,
+    FIELD_LOCATION_QUERY_RESP_LOCATION_TIME,
+    FIELD_LOCATION_QUERY_RESP_EXPIRY,
+    FIELD_LOCATION_QUERY_RESP_RADIUS,
+    FIELD_LOCATION_QUERY_RESP_MAX,
+};
+
+enum _JSON_C_NEIGHBOUR_QUERY_RESP_FIELDS {
+    FIELD_NEIGHBOUR_QUERY_RESP_CODE,
+    FIELD_NEIGHBOUR_QUERY_RESP_DESC,
+    FIELD_NEIGHBOUR_QUERY_RESP_RECORD_COUNT,
+    FIELD_NEIGHBOUR_QUERY_RESP_ARRAY_START,
+    FIELD_NEIGHBOUR_QUERY_RESP_UID,
+    FIELD_NEIGHBOUR_QUERY_RESP_FNAME,
+    FIELD_NEIGHBOUR_QUERY_RESP_LNAME,
+    FIELD_NEIGHBOUR_QUERY_RESP_AVATAR_URL,
+    FIELD_NEIGHBOUR_QUERY_RESP_LATITUDE,
+    FIELD_NEIGHBOUR_QUERY_RESP_LONGITUDE,
+    FIELD_NEIGHBOUR_QUERY_RESP_ALTITUDE,
+    FIELD_NEIGHBOUR_QUERY_RESP_DISTANCE,
+    FIELD_NEIGHBOUR_QUERY_RESP_ARRAY_END,
+    FIELD_NEIGHBOUR_QUERY_RESP_MAX,
+};
+
 #define J2C_MSG_TABLE(name, ...)                \
     struct j2c_##name##_msg __VA_ARGS__
 
@@ -272,6 +334,9 @@ J2C_MSG_STRUCT(uid_query, FIELD_UID_QUERY_MAX);
 J2C_MSG_STRUCT(profile_query, FIELD_PROFILE_QUERY_MAX);
 J2C_MSG_STRUCT(avatar_query, FIELD_AVATAR_QUERY_MAX);
 J2C_MSG_STRUCT(cxn_preference_query, FIELD_CXN_PREFERENCE_QUERY_MAX);
+J2C_MSG_STRUCT(location, FIELD_LOCATION_MAX);
+J2C_MSG_STRUCT(location_query, FIELD_LOCATION_QUERY_MAX);
+J2C_MSG_STRUCT(neighbour_query, FIELD_NEIGHBOUR_QUERY_MAX);
 
 struct j2c_cxn_preference_msg_array1 {
     const char *fields[FIELD_CXN_PREFERENCE_ARRAY_END -
@@ -298,6 +363,9 @@ typedef union {
     J2C_MSG_TABLE(avatar_query, avatar_query);
     J2C_MSG_TABLE(cxn_preference, cxn_preference);
     J2C_MSG_TABLE(cxn_preference_query, cxn_preference_query);
+    J2C_MSG_TABLE(location, location);
+    J2C_MSG_TABLE(location_query, location_query);
+    J2C_MSG_TABLE(neighbour_query, neighbour_query);
 } j2c_msg_t;
 
 #define J2C_RESP_TABLE(name, ...)               \
@@ -317,6 +385,8 @@ J2C_RESP_STRUCT(uid_query, FIELD_UID_QUERY_RESP_MAX);
 J2C_RESP_STRUCT(profile_info, FIELD_PROFILE_INFO_RESP_MAX);
 J2C_RESP_STRUCT(avatar_query, FIELD_AVATAR_QUERY_RESP_MAX);
 J2C_RESP_STRUCT(cxn_preference, FIELD_CXN_PREFERENCE_RESP_MAX);
+J2C_RESP_STRUCT(location, FIELD_LOCATION_RESP_MAX);
+J2C_RESP_STRUCT(location_query, FIELD_LOCATION_QUERY_RESP_MAX);
 
 struct j2c_cxn_request_query_resp_array1 {
     char *fields[FIELD_CXN_REQUEST_QUERY_RESP_ARRAY_END -
@@ -351,6 +421,17 @@ struct j2c_cxn_preference_query_resp {
     struct j2c_cxn_preference_query_resp_array1 *array1;
 };
 
+struct j2c_neighbour_query_resp_array1 {
+    char *fields[FIELD_NEIGHBOUR_QUERY_RESP_ARRAY_END -
+                 FIELD_NEIGHBOUR_QUERY_RESP_ARRAY_START];
+};
+
+struct j2c_neighbour_query_resp {
+    char *fields[FIELD_NEIGHBOUR_QUERY_RESP_ARRAY_START];
+    int nr_array1_records;
+    struct j2c_neighbour_query_resp_array1 *array1;
+};
+
 typedef union {
     J2C_RESP_TABLE(registration, registration);
     J2C_RESP_TABLE(profile, profile);
@@ -364,6 +445,9 @@ typedef union {
     J2C_RESP_TABLE(avatar_query, avatar_query);
     J2C_RESP_TABLE(cxn_preference, cxn_preference);
     J2C_RESP_TABLE(cxn_preference_query, cxn_preference_query);
+    J2C_RESP_TABLE(location, location);
+    J2C_RESP_TABLE(location_query, location_query);
+    J2C_RESP_TABLE(neighbour_query, neighbour_query);
 } j2c_resp_t;
 
 #endif // JSON_STRUCT_H

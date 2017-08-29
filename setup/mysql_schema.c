@@ -40,6 +40,9 @@
 #define DROP_TABLE_UserConnectPreferences               \
     "DROP TABLE IF EXISTS UserConnectPreferences"
 
+#define DROP_TABLE_UserGeoLocation              \
+    "DROP TABLE IF EXISTS UserGeoLocation"
+
 #define CREATE_TABLE_UserRegInfo                                        \
     "CREATE TABLE IF NOT EXISTS UserRegInfo (UID VARCHAR(16) BINARY "   \
     "NOT NULL UNIQUE, FirstName VARCHAR(20), LastName VARCHAR(20), "    \
@@ -74,6 +77,10 @@
     "CREATE TABLE IF NOT EXISTS UserConnectPreferences (UID VARCHAR(16) BINARY NOT NULL, " \
     "ChannelId VARCHAR(16) NOT NULL, ChannelFlags VARCHAR(16) NOT NULL)"
 
+#define CREATE_TABLE_UserGeoLocation                                    \
+    "CREATE TABLE IF NOT EXISTS UserGeoLocation (UID VARCHAR(16) BINARY NOT NULL, " \
+    "Location POINT NOT NULL, SeenAt DATETIME, Expiry INTEGER, Radius Integer)"
+
 #define ALTER_TABLE_V2_UserRegInfo                                      \
     "ALTER TABLE UserRegInfo ADD ProfileFlags VARCHAR(10) DEFAULT 'public'"
 
@@ -99,6 +106,14 @@
     "CHANGE FromUID FromUID VARCHAR(16) BINARY NOT NULL, "              \
     "CHANGE ToUID ToUID VARCHAR(16) BINARY NOT NULL"
 
+#define DROP_FUNCTION_LocationAPIs                      \
+    "DROP FUNCTION IF EXISTS libgeod_info",             \
+    "DROP FUNCTION IF EXISTS libgeod_inverse"
+
+#define CREATE_FUNCTION_LocationAPIs                                    \
+    "CREATE FUNCTION libgeod_info RETURNS STRING SONAME 'libmysqlgeod.so'", \
+    "CREATE FUNCTION libgeod_inverse RETURNS REAL SONAME 'libmysqlgeod.so'"
+
 /*
  * List of queries to run through to setup tables the first time. Add
  * user/db creation as well to the list.
@@ -111,6 +126,7 @@ static const char *mysql_drop_query[] = {
     DROP_TABLE_UserConnectRequest,
     DROP_TABLE_UserConnectChannel,
     DROP_TABLE_UserConnectPreferences,
+    DROP_TABLE_UserGeoLocation,
 };
 
 /* Version 0 */
@@ -133,9 +149,17 @@ static const char *mysql_db_update_v1[] = {
     ALTER_TABLE_UserConnectChannel,
 };
 
+/* Version 2 */
 static const char *mysql_db_update_v2[] = {
     CREATE_TABLE_UserConnectPreferences,
     ALTER_TABLE_V2_UserRegInfo,
+};
+
+/* Version 3 */
+static const char *mysql_db_update_v3[] = {
+    CREATE_TABLE_UserGeoLocation,
+    DROP_FUNCTION_LocationAPIs,
+    CREATE_FUNCTION_LocationAPIs,
 };
 
 static struct mysql_config *g_mysql_cfg;
@@ -168,6 +192,8 @@ int main (int argc, char *argv[])
             version = 1;
         } else if (strcmp(argv[1], "-v2") == 0) {
             version = 2;
+        } else if (strcmp(argv[1], "-v3") == 0) {
+            version = 3;
         }
     }
 
@@ -211,6 +237,9 @@ int main (int argc, char *argv[])
         break;
     case 2:
         MYSQL_RUN_QUERY(query, con, mysql_db_update_v2);
+        break;
+    case 3:
+        MYSQL_RUN_QUERY(query, con, mysql_db_update_v3);
         break;
     default:
         break;
